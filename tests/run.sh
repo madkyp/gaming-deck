@@ -19,7 +19,6 @@ unset XDG_DATA_HOME XDG_CACHE_HOME XDG_CONFIG_HOME GAMING_DECK_APPS_DIR INSTALL_
 export LC_ALL=C.UTF-8
 mkdir -p "$HOME" "$T/bin" "$T/dl" "$T/fake" "$T/sys"
 A="$HOME/.local/share/applications"
-APPS="$HOME/Applications"
 
 # ---------------------------------------------------------------- stubs ----
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$T/bin/$1"; chmod +x "$T/bin/$1"; }

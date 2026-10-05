@@ -15,30 +15,16 @@ set -o pipefail
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-APPS_DIR="${GAMING_DECK_APPS_DIR:-${INSTALL_ANY_APPS_DIR:-$HOME/Applications}}"
 DESKTOP_DIR="$DATA_HOME/applications"
-ICON_DIR="$DATA_HOME/icons"
-AUTOSTART_DIR="$CONFIG_HOME/autostart"
-UNIT_DIR="$CONFIG_HOME/systemd/user"
 STATE_DIR="$DATA_HOME/gaming-deck"
 HISTORY_FILE="$STATE_DIR/history.tsv"
-TRASH_DIR="$STATE_DIR/trash"
 DL_DIR="$CACHE_HOME/gaming-deck/downloads"
-AUR_URL="${GAMING_DECK_AUR_URL:-https://aur.archlinux.org}"
-FLATHUB_API="${GAMING_DECK_FLATHUB_API:-https://flathub.org/api/v2}"
-NEWS_URL="${GAMING_DECK_NEWS_URL:-https://archlinux.org/feeds/news/}"
 PACMAN_LOG="${GAMING_DECK_PACMAN_LOG:-/var/log/pacman.log}"
 PACMAN_DB="${GAMING_DECK_PACMAN_DB:-/var/lib/pacman/local}"
 SNAPPER_CONFIG="${GAMING_DECK_SNAPPER_CONFIG:-root}"
 SNAPPER_CONFIG_DIR="${GAMING_DECK_SNAPPER_DIR:-/etc/snapper/configs}"
-SNAPSHOTS_DIR="${GAMING_DECK_SNAPSHOTS_DIR:-/.snapshots}"
 INSTALL_INFO="$STATE_DIR/install.env"     # written by install.sh
-MARK="gaming-deck"      # X-Created-By of our launchers ("install-any" = legacy)
-SEP=$'\x1f'              # field separator for internal records (never collapses)
 
-# GitHub origin of the file being installed (set by ghinstall / updates) and,
-# when updating, the launcher being replaced.
-GH_REPO="" GH_TAG="" GH_ASSET="" UPDATE_TARGET=""
 
 log()  { printf '%s\n' "$*"; }
 err()  { printf 'ERROR: %s\n' "$*" >&2; }
@@ -110,10 +96,6 @@ pk_pacman() {
 # leading VAR=value assignments, field codes and quotes.
 
 # absolute path of the program run by an Exec line (empty if not found)
-
-# package owning the program of an Exec line. `pacman -Qo` costs ~70 ms per
-# call, so bulk callers prefill PKG_CACHE with one batched lookup.
-declare -A PKG_CACHE=()
 
 # packages that are generic wrappers, never the "app" itself
 
@@ -197,13 +179,6 @@ download() {
 # ===========================================================================
 # App management over .desktop entries
 # ===========================================================================
-APP_DIRS=(
-    "$DESKTOP_DIR"
-    "$DATA_HOME/flatpak/exports/share/applications"
-    "/var/lib/flatpak/exports/share/applications"
-    "/usr/share/applications"
-    "/usr/local/share/applications"
-)
 
 # visible .desktop files, user entries overriding system ones with the same name
 
@@ -222,20 +197,6 @@ APP_DIRS=(
 #   gaming-deck edit <file.desktop> NAME=… ICON=… EXEC=… CATEGORIES=… COMMENT=…
 #                                    NODISPLAY=true|false TERMINAL=true|false
 #   Empty values leave the field untouched. Legacy form: edit <file> <name> <icon>
-
-# --- leftovers: user data/config/cache folders that belong to an app --------
-# Matched by exact (case-insensitive) folder name against the app id, name,
-# WM class, binary and package; generic/shared folders are never proposed.
-LEFTOVER_SKIP=" applications icons fonts flatpak themes mime systemd autostart trash keyrings gnupg
- pulse pipewire wireplumber dconf gtk-2.0 gtk-3.0 gtk-4.0 fontconfig hypr hyde kitty gaming-deck
- install-any quickshell nvim zsh fish bash git ssh menus desktop-directories xdg-desktop-portal
- environment.d sounds color-schemes kde qt5ct qt6ct kvantum wine lutris steam heroic bottles yay
- paru pacman mesa_shader_cache nvidia thumbnails electron python python3 java node mono dotnet
- env sh app apprun appimage chromium google-chrome mozilla flatpak-run "
-
-# "lowercase-name<TAB>path" of every data/config/cache folder, built once per
-# run (sizes checks every app against it)
-LEFTOVER_INDEX=""
 
 # remove a leftover folder, only if it is strictly inside $HOME
 
@@ -262,18 +223,6 @@ LEFTOVER_INDEX=""
 # ===========================================================================
 # Flatpak permissions (a tiny Flatseal): user overrides via `flatpak override`
 # ===========================================================================
-# key|label|[Context] field|token(s) that grant it|grant flags|revoke flags
-FP_PERMS=(
-    "network|Network|shared|network|--share=network|--unshare=network"
-    "wayland|Wayland|sockets|wayland|--socket=wayland|--nosocket=wayland"
-    "x11|X11|sockets|x11 fallback-x11|--socket=x11|--nosocket=x11 --nosocket=fallback-x11"
-    "audio|Audio|sockets|pulseaudio|--socket=pulseaudio|--nosocket=pulseaudio"
-    "bluetooth|Bluetooth|features|bluetooth|--allow=bluetooth|--disallow=bluetooth"
-    "devices|All devices|devices|all|--device=all|--nodevice=all"
-    "home|Home folder|filesystems|home ~|--filesystem=home|--nofilesystem=home"
-    "host|Whole filesystem|filesystems|host|--filesystem=host|--nofilesystem=host"
-    "downloads|Downloads|filesystems|xdg-download|--filesystem=xdg-download|--nofilesystem=xdg-download"
-)
 
 # effective [Context] of an app (metadata + overrides), from stdin in the
 # `flatpak info --show-permissions` format → "field<TAB>token" lines
@@ -345,23 +294,6 @@ gh_api() {
 # AUR review — look at a package before building it
 # ===========================================================================
 
-# level|regex|explanation — "install" rules only apply to the .install file
-AUR_RULES=(
-    'high|(curl|wget)[^|#]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh\b|Downloads a script and pipes it straight into a shell'
-    'high|base64[[:space:]]+(-d|--decode)|Decodes base64 data (a common way to hide code)'
-    'high|/dev/(tcp|udp)/|(^|[^a-z])nc[[:space:]].*-e[[:space:]]|ncat[[:space:]].*-e|socat[[:space:]].*exec|Raw network connection / reverse-shell pattern'
-    'high|(^|[;&|[:space:]])sudo[[:space:]]|Uses sudo inside the build (makepkg never needs it)'
-    'high|eval[[:space:]].*(curl|wget)|Evaluates code downloaded at build time'
-    'high|(\\x[0-9a-fA-F]{2}){8,}|Long hex-escaped string (possible obfuscation)'
-    'high|rm[[:space:]]+-[a-zA-Z]*[rR][a-zA-Z]*[[:space:]]+("?/"?|~/?|"?\$HOME"?/?)([[:space:]]|$)|Deletes system or home directories'
-    'high|python[0-9.]*[[:space:]]+-c.*(urllib|requests|socket)|Inline Python that talks to the network'
-    'install|(curl|wget|git[[:space:]]+clone)|The .install script downloads things at install time (it runs as root)'
-    'medium|chmod[[:space:]]+(-R[[:space:]]+)?[0-7]?777|Makes files world-writable'
-    'medium|systemctl[[:space:]]+(--now[[:space:]]+)?enable|Enables a service on install'
-    'medium|crontab|/etc/cron|Touches cron (scheduled tasks)'
-    'medium|\.bashrc|\.zshrc|\.profile|/etc/profile|Modifies shell start-up files'
-)
-
 # flag lines of a PKGBUILD (+ optional .install) that deserve a look.
 # Output: level<US>text<US>where  (level = high|medium|low)
 
@@ -386,12 +318,6 @@ AUR_RULES=(
 # ===========================================================================
 
 # update one item: gaming-deck update <source> <id>
-
-# ---------------------------------------------------------------------------
-# Background update check (opt-in): a systemd user timer runs
-# `gaming-deck notify-updates`; the GUI doesn't need to be open.
-# ---------------------------------------------------------------------------
-TIMER_NAME="gaming-deck-updates"
 
 # ===========================================================================
 # Arch news — read them before a system upgrade
