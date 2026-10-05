@@ -150,6 +150,8 @@ ShellRoot {
         property var    gp: ({})            // profile being edited
         property var    gameArgs: []
         property string gameLog: ""
+        // the last EXPORT / IMPORT result, shown in the BACKUP card ({} = nothing yet)
+        property var    bkResult: ({})
         property string gameStatus: ""
         property string selGame: ""
         property string selGameId: ""
@@ -469,6 +471,12 @@ ShellRoot {
             stderr: SplitParser { onRead: (l) => win.gameLog += l + "\n" }
             onExited: (c, s) => {
                 win.gameStatus = c === 0 ? "DONE ✓" : (c === 3 ? "CLOSE STEAM FIRST" : "FAILED · " + c);
+                if (win.gameArgs[0] === "export" || win.gameArgs[0] === "gaming-import") {
+                    var lines = win.gameLog.replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").filter(function (x) { return x.trim() !== ""; });
+                    var saved = /Backup saved to (.+)$/.exec(lines.join("\n").split("\n").filter(function (x) { return x.indexOf("Backup saved to") >= 0; })[0] || "");
+                    win.bkResult = { ok: c === 0, what: win.gameArgs[0] === "export" ? "export" : "import",
+                                     file: saved ? saved[1].trim() : "", lines: lines.slice(-4) };
+                }
                 gamesProc.running = true; gstatProc.running = true; pdbStatProc.running = true;
                 if (win.gameArgs[0] === "pdbindex" && win.selGameId) sugProc.running = true;
                 if (win.gameArgs[0] === "shaderclean") shaderProc.running = true;
@@ -3714,6 +3722,40 @@ ShellRoot {
                                 Text {
                                     Layout.fillWidth: true; wrapMode: Text.WordWrap; color: pal.dim; font.family: win.mono; font.pixelSize: 10
                                     text: win.t("Game profiles, shader looks, saved preset pages, keys and the CPU scheduler setting, to ~/gaming-deck-backup-<date>.json. IMPORT adds what this PC lacks (a Control Deck backup works too); then CHECK FOR THIS PC in LIBRARY adapts it.")
+                                }
+                                // what the last EXPORT / IMPORT did
+                                Rectangle {
+                                    Layout.fillWidth: true; Layout.topMargin: 2
+                                    visible: win.bkResult.what !== undefined
+                                    implicitHeight: bkRes.implicitHeight + 20; radius: 8
+                                    color: Qt.rgba(0, 0, 0, 0.18); border.width: 1
+                                    border.color: win.bkResult.ok ? pal.ok : pal.bad
+                                    RowLayout {
+                                        id: bkRes; anchors.fill: parent; anchors.margins: 10; spacing: 10
+                                        ColumnLayout {
+                                            Layout.fillWidth: true; spacing: 3
+                                            Text {
+                                                Layout.fillWidth: true; font.family: win.mono; font.pixelSize: 11; font.bold: true
+                                                color: win.bkResult.ok ? pal.ok : pal.bad
+                                                text: !win.bkResult.ok ? win.t("✘ It didn't work") : (win.bkResult.what === "export" ? win.t("✔ Backup saved") : win.t("✔ Backup imported"))
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; color: pal.text; font.family: win.mono; font.pixelSize: 10
+                                                visible: text !== ""; text: win.bkResult.file || ""
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: pal.dim; font.family: win.mono; font.pixelSize: 10
+                                                text: (win.bkResult.lines || []).filter(function (x) { return x.indexOf("Backup saved to") < 0; }).map(function (x) { return x.replace(/^\s*[✔→]?\s*/, ""); }).join("\n")
+                                                visible: text !== ""
+                                            }
+                                        }
+                                        MiniBtn {
+                                            width: Math.max(110, implicitWidth); height: 30; primary: false
+                                            visible: win.bkResult.ok === true && (win.bkResult.file || "") !== ""
+                                            label: win.t("OPEN FOLDER")
+                                            onClicked: Qt.openUrlExternally("file://" + String(win.bkResult.file).replace(/^~/, win.home).replace(/\/[^\/]*$/, ""))
+                                        }
+                                    }
                                 }
                             }
                         }

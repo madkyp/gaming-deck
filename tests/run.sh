@@ -1111,6 +1111,13 @@ eq "fix drops only what does nothing on this GPU" "$("$CD" gprofile get steam:60
 "$CD" gaming-import "$BK" >/dev/null 2>&1
 eq "import adds what's missing here" "$("$CD" gprofile get steam:600 | jq -r '.env.__GL_SHADER_DISK_CACHE_SIZE')" 1000
 eq "…and keeps what's already here" "$("$CD" gprofile get steam:601 | jq -r '.env.A')" 1
+"$CD" gprofile reset steam:600 >/dev/null
+jq '.app = "control-deck"' "$BK" > "$T/bk-cd.json"
+"$CD" gaming-import "$T/bk-cd.json" >/dev/null 2>&1; eq "a Control Deck backup imports too" "$?" 0
+eq "…with its profiles" "$("$CD" gprofile get steam:600 | jq -r '.env.__GL_SHADER_DISK_CACHE_SIZE')" 1000
+jq '.app = "system-deck"' "$BK" > "$T/bk-sd.json"
+"$CD" gaming-import "$T/bk-sd.json" >/dev/null 2>&1; eq "another app's backup is refused" "$?" 2
+has "export says where it saved (the BACKUP card reads that line)" "$("$CD" export "$T/bk2.json" 2>&1)" "Backup saved to $T/bk2.json"
 section "FX: which route for which game"
 ADV() { bash -c 'source "$1"; fx_advice "$2" "$3" "$4" "$5"' _ "$CD" "$@"; }
 eq "DirectX single-player → ReShade" "$(ADV steam:1 '[{"api":"dxgi"}]' '{"level":"none"}' null | jq -r .pick)" reshade

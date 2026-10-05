@@ -669,9 +669,9 @@ gaming_import() {
 
 # gaming-import <backup.json> — only the gaming part (e.g. from your other PC)
 cmd_gaming_import() {
-    # a Gaming Deck backup, or the gaming part of an old Gaming Deck one
-    [[ -f "$1" ]] && jq -e '(.app == "gaming-deck" or .app == "gaming-deck") and (.gaming | type == "object")' "$1" >/dev/null 2>&1 \
-        || { err "not a Gaming Deck (or Gaming Deck) backup with game data: $1"; return 2; }
+    # a Gaming Deck backup, or the gaming part of an old Control Deck one
+    [[ -f "$1" ]] && jq -e '(.app == "gaming-deck" or .app == "control-deck") and (.gaming | type == "object")' "$1" >/dev/null 2>&1 \
+        || { err "not a Gaming Deck (or Control Deck) backup with game data: $1"; return 2; }
     gaming_import "$1"
     history_add "gaming import" backup "$(basename "$1")" 0
 }

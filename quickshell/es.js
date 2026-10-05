@@ -330,6 +330,7 @@ var ES = {
     "ON-SCREEN CHECK": "MARCA EN PANTALLA",
     "ON/OFF KEY": "TECLA ON/OFF",
     "OPEN ": "ABRIR ",
+    "OPEN FOLDER": "ABRIR CARPETA",
     "OPEN IN CRISOL": "ABRIR EN CRISOL",
     "OPEN": "ABRIR",
     "OPENING…": "ABRIENDO…",
@@ -632,8 +633,11 @@ var ES = {
     "⚠ Umbral 0.10.0 or newer is needed: it asks the deck for shaders and TEMPS before starting the game. Update Umbral.": "⚠ Hace falta Umbral 0.10.0 o posterior: pide a la app los shaders y TEMPS antes de arrancar el juego. Actualiza Umbral.",
     "✓ Everything games need is in place (": "✓ Todo lo que necesitan los juegos está en orden (",
     "✓ SUMMARY": "✓ RESUMEN",
+    "✔ Backup imported": "✔ Copia importada",
+    "✔ Backup saved": "✔ Copia guardada",
     "✗ Anti-cheat (": "✗ Anti-cheat (",
     "✗ ReShade is banned or blocked in this game (PCGamingWiki): not touched": "✗ ReShade está vetado o bloqueado en este juego (PCGamingWiki): no se toca",
+    "✘ It didn't work": "✘ No ha funcionado",
 };
 // sentences with values inside: [regex, replacement]
 var PATTERNS = [
