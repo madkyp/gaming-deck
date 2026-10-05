@@ -351,9 +351,24 @@ cmd_migrate() {
     mkdir -p "$new"
     # 1) data (same filesystem: a rename, instant)
     for sub in gaming reshade sessions; do
-        if [[ -d "$old/$sub" && ! -e "$new/$sub" ]]; then
+        [[ -d "$old/$sub" ]] || continue
+        if [[ ! -e "$new/$sub" ]]; then
             mv -- "$old/$sub" "$new/$sub" && { log "→ moved $sub/"; n=$((n + 1)); }
+            continue
         fi
+        # Gaming Deck already ran before migrating: merge, keeping what is newer here
+        local merged=0
+        for f in "$old/$sub"/* "$old/$sub"/.[!.]*; do
+            [[ -e "$f" || -L "$f" ]] || continue
+            if [[ ! -e "$new/$sub/${f##*/}" ]]; then
+                mv -- "$f" "$new/$sub/" && merged=1
+            elif [[ "${f##*/}" == known-games.txt ]]; then
+                sort -u -- "$f" "$new/$sub/known-games.txt" > "$new/$sub/.known.tmp" &&
+                    mv -- "$new/$sub/.known.tmp" "$new/$sub/known-games.txt" && rm -f -- "$f" && merged=1
+            fi
+        done
+        rmdir -- "$old/$sub" 2>/dev/null
+        ((merged)) && { log "→ merged $sub/"; n=$((n + 1)); }
     done
     if [[ -d "$old/logs" ]]; then
         mkdir -p "$new/logs"

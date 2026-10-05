@@ -1312,8 +1312,10 @@ printf '2026-10-01 10:00:00\tinstall\trepo\tfoo\tok\n2026-10-01 11:00:00\tplay\t
 printf '"UserLocalConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"apps"\n\t\t\t\t{\n\t\t\t\t\t"9100"\n\t\t\t\t\t{\n\t\t\t\t\t\t"LaunchOptions"\t\t"%s/.local/bin/control-deck run %%command%%"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n' "$HOME" > "$MS/userdata/7/config/localconfig.vdf"
 mig() { GAMING_DECK_OLD_DATA="$OLD" GAMING_DECK_STEAM_ROOT="$MS" "$@"; }
 mv "$NEW/gaming" "$NEW/gaming.keep" 2>/dev/null; mv "$NEW/reshade" "$NEW/reshade.keep" 2>/dev/null; mv "$NEW/history.tsv" "$NEW/history.keep" 2>/dev/null
+mkdir -p "$NEW/gaming"; echo steam:1 > "$NEW/gaming/known-games.txt"; echo steam:9100 > "$OLD/gaming/known-games.txt"  # Gaming Deck opened before migrating
 GAMING_DECK_STEAM_RUNNING=1 mig "$CD" migrate >/dev/null 2>&1; eq "Steam open: data moved, launch options left for later (3)" "$?" 3
 yes "…game data now in Gaming Deck's folder" "[[ -f '$NEW/gaming/profiles.json' && ! -e '$OLD/gaming' ]]"
+eq "…merged into the folder Gaming Deck had already made" "$(paste -sd , "$NEW/gaming/known-games.txt")" "steam:1,steam:9100"
 eq "ReShade.ini paths point to the new folder" "$(grep -c 'gaming-deck' "$GM/ReShade.ini")" 2
 eq "…DLL links too" "$(readlink "$GM/dxgi.dll")" "$NEW/reshade/bin/current/ReShade64.dll"
 has "vkBasalt config fixed" "$(cat "$NEW/gaming/fx/steam_9100/vkBasalt.conf")" "$NEW/reshade/Shaders"
