@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Gaming Deck
+Comment=Game profiles, visual shaders (ReShade/vkBasalt), upscaling and gaming status for Steam and Umbral
+Exec=qs -c gaming-deck
+Icon=gaming-deck
+Terminal=false
+Categories=Game;Utility;
+Keywords=steam;proton;reshade;vkbasalt;gamemode;mangohud;fsr;shaders;

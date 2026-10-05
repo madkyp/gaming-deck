@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed bash coreutils findutils grep sed gawk util-linux procps-ng jq libarchive shellcheck git python
+
+      - uses: actions/checkout@v5
+
+      - name: Trust the checkout (git runs as another user in the container; --system because the tests use their own HOME)
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: ShellCheck
+        run: shellcheck -x -S warning bin/gaming-deck install.sh uninstall.sh tests/run.sh
+
+      - name: Test suite
+        run: tests/run.sh
