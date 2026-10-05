@@ -72,6 +72,7 @@ ShellRoot {
             ["bench",    "", "BENCH"],
             ["prefixes", "", "PREFIXES"],
             ["maint",    "", "MAINTENANCE"]]
+        function tagTone(tone) { return tone === "ok" ? pal.ok : (tone === "bad" ? pal.bad : (tone === "warn" ? pal.amber : pal.sky)); }
         // "Advanced Micro Devices, Inc. [AMD/ATI] Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]" → "Radeon RX 9070/9070 XT/9070 GRE"
         function shortGpu(n) {
             n = String(n || "");
@@ -354,7 +355,7 @@ ShellRoot {
         // STATUS is live while it's on screen
         Timer {
             interval: 3000; repeat: true
-            running: win.visible && win.view === "gaming" && win.gameView === "status"
+            running: win.visible && win.gameView === "status"
             onTriggered: if (!gstatProc.running) gstatProc.running = true
         }
         function playtimeText(sec) {
@@ -822,29 +823,6 @@ ShellRoot {
             }
         }
 
-
-        component NavTab: Item {
-            property string label
-            property string key
-            implicitWidth: nt.implicitWidth + 6
-            implicitHeight: 28
-            Text {
-                id: nt
-                anchors.left: parent.left; anchors.top: parent.top
-                text: label; font.family: win.mono; font.pixelSize: 12
-                font.letterSpacing: 3; font.bold: true
-                color: win.view === key ? pal.accentHi : pal.dim
-            }
-            Rectangle {
-                anchors.left: parent.left; anchors.bottom: parent.bottom
-                width: nt.implicitWidth; height: 2; color: pal.accent
-                visible: win.view === key
-            }
-            MouseArea {
-                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                onClicked: { if (win.view === key) win.loadView(); else win.view = key; }
-            }
-        }
 
         // small toggle / button chip
         component Chip: Rectangle {

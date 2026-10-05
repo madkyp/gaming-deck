@@ -3,10 +3,10 @@
 #   tools/gui-shot/shot.sh <block.qml> <out dir> [first-shot second] [shots]
 # <block.qml> is pasted into the window (after `property string gameView`), e.g. a
 # Timer that switches views; one shot every 10 s from <first>. The window is
-# floated at 933×1000, closed afterwards; warnings go to <out dir>/qml.log.
+# floated at $SHOT_W×$SHOT_H (default 1180×820), closed afterwards; warnings go to <out dir>/qml.log.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$here/../.."
-block="$1"; out="$2"; first="${3:-14}"; shots="${4:-1}"
+block="$1"; out="$2"; first="${3:-14}"; shots="${4:-1}"; sw="${SHOT_W:-1180}"; sh="${SHOT_H:-820}"
 work="$(mktemp -d)"; mkdir -p "$out"
 python3 - "$repo/quickshell/shell.qml" "$block" "$work/shell.qml" <<'PY'
 import sys
@@ -22,7 +22,7 @@ a="$(hyprctl clients -j | jq -r '.[] | select(.title == "CD close test 7731") | 
 id="$(hyprctl clients -j | jq -r '.[] | select(.title == "CD close test 7731") | .stableId' | head -1)"
 w="hl.get_window('address:$a')"
 hyprctl eval "hl.dispatch(hl.dsp.window.float({action = 'enable', window = $w}))" >/dev/null 2>&1 || hyprctl dispatch setfloating "address:$a" >/dev/null
-hyprctl eval "hl.dispatch(hl.dsp.window.resize({x = 933, y = 1000, window = $w}))" >/dev/null 2>&1 || hyprctl dispatch resizewindowpixel exact 933 1000,"address:$a" >/dev/null
+hyprctl eval "hl.dispatch(hl.dsp.window.resize({x = $sw, y = $sh, window = $w}))" >/dev/null 2>&1 || hyprctl dispatch resizewindowpixel exact $sw $sh,"address:$a" >/dev/null
 for ((k = 0; k < shots; k++)); do
     t=$(( first + 10 * k )); while (( $(date +%s) - start < t )); do sleep 1; done
     grim -T "$id" "$out/shot$k.png"

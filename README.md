@@ -42,6 +42,24 @@ The sidebar has eight sections, in English or Spanish (**ESP / ENG** at the bott
 
 ---
 
+## 📸 Screenshots
+
+| LIBRARY | GAME PAGE |
+|---|---|
+| ![LIBRARY — Steam and Umbral games with their covers and ProtonDB tier](screenshots/library.png) | ![GAME PAGE — banner, PLAY and the launch profile](screenshots/game.png) |
+
+| FX | STATUS |
+|---|---|
+| ![FX — ReShade / vkBasalt looks, community shader packs and toggles](screenshots/fx.png) | ![STATUS — GPU/CPU live, while-playing switches and the last sessions](screenshots/status.png) |
+
+| HEALTH | SHADERS |
+|---|---|
+| ![HEALTH — everything games need, checked](screenshots/health.png) | ![SHADERS — shader caches per game, driver cache or all](screenshots/shaders.png) |
+
+| PREFIXES | MAINTENANCE |
+|---|---|
+| ![PREFIXES — Wine/Proton prefixes: backup, clone, delete](screenshots/prefixes.png) | ![MAINTENANCE — GE-Proton, clean-up, profile backup and self-update](screenshots/maintenance.png) |
+
 ## 🌑 Umbral compatibility
 
 Gaming Deck is compatible with **[Umbral](https://github.com/madkyp/umbral-project)** (`github.com/madkyp/umbral-project`), a GTK launcher for Battle.net (World of Warcraft…) and for Windows games from no store, running with Proton. Install both and they work together: Umbral's games show up in the LIBRARY next to Steam's.
