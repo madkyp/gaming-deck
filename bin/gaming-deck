@@ -15,7 +15,6 @@ set -o pipefail
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-DESKTOP_DIR="$DATA_HOME/applications"
 STATE_DIR="$DATA_HOME/gaming-deck"
 HISTORY_FILE="$STATE_DIR/history.tsv"
 DL_DIR="$CACHE_HOME/gaming-deck/downloads"
