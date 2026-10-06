@@ -627,6 +627,11 @@ ShellRoot {
             stdout: StdioCollector { onStreamFinished: { var l = text.trim(); if (l === "es" || l === "en") win.lang = l; } }
         }
         Process { id: langSaveProc }
+        // the sidebar's STEAM button
+        Process {
+            id: steamOpenProc
+            command: ["setsid", "-f", "steam"]
+        }
         Process {
             id: modsProc
             command: [win.scriptPath, "mods", win.selGame]
