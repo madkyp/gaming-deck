@@ -1410,14 +1410,16 @@ yes "another game of the series doesn't" "(( $(fn wiki_score "Tainted Grail: The
 "$CD" wiki 700 set https://kingdom-come-deliverance.fandom.com/ >/dev/null
 eq "a wiki set by hand" "$("$CD" wiki 700 | jq -r .base)" "https://kingdom-come-deliverance.fandom.com"
 G="$("$CD" guides 700)"
-eq "guide links: EliteGuías (game, achievements), Steam, the wiki" "$(jq -r 'map(.label + ":" + .sub) | join(",")' <<<"$G")" \
-   "EliteGuías:guide,EliteGuías:achievements,Steam:community guides,Steam:global achievements,Wiki:kingdom-come-deliverance.fandom.com"
+eq "guide links: EliteGuías (game, achievements), Map Genie, Steam, the wiki" "$(jq -r 'map(.label + ":" + .sub) | join(",")' <<<"$G")" \
+   "EliteGuías:guide,EliteGuías:achievements,Map Genie:interactive map,Steam:community guides,Steam:global achievements,Wiki:kingdom-come-deliverance.fandom.com"
+eq "Map Genie: the game's page by name, its game list when there's none" "$(jq -c '.[] | select(.label == "Map Genie") | [.url, .fallback]' <<<"$G")" \
+   '["https://mapgenie.io/kingdom-come-deliverance-2","https://mapgenie.io/"]'
 eq "EliteGuías: straight to the game's guide (its address worked out from the name)" "$(jq -r '.[0].url' <<<"$G")" "https://www.eliteguias.com/guias/k/kcd2/kingdom-come-deliverance-2.php"
 eq "…its search if there's none" "$(jq -r '.[0].fallback' <<<"$G")" "https://www.eliteguias.com/buscar.php?q=Kingdom%20Come%3A%20Deliverance%20II"
 eq "…and its achievements page" "$(jq -r '.[1].url' <<<"$G")" "https://www.eliteguias.com/trucos/k/kingdom-come-deliverance-2.php"
 eq "EliteGuías names: subtitle words count" "$(fn eg_slug "Tainted Grail: The Fall of Avalon")" "tainted-grail-the-fall-of-avalon tgtfoa"
 eq "…symbols and case" "$(fn eg_slug "BALL x PIT™")" "ball-x-pit bxp"
-eq "Steam guides of this game" "$(jq -r '.[2].url' <<<"$G")" "https://steamcommunity.com/app/700/guides/"
+eq "Steam guides of this game" "$(jq -r '.[] | select(.sub == "community guides") | .url' <<<"$G")" "https://steamcommunity.com/app/700/guides/"
 "$CD" wiki 700 clear; GAMING_DECK_FANDOM_FMT="file://$T/nofandom/%s" "$CD" wiki 700 >/dev/null
 eq "no wiki found: remembered (not looked up on every open)" "$(jq -r '."700".base' "$HOME/.local/share/gaming-deck/gaming/wiki.json")" ""
 eq "…and no wiki link" "$("$CD" guides 700 | jq -r 'map(select(.label == "Wiki")) | length')" 0
@@ -1445,6 +1447,13 @@ mv "$T/ui.json.keep" "$HOME/.local/share/gaming-deck/ui.json"
 # the guide browser over the game
 "$CD" web "http://x.example" >/dev/null 2>&1; eq "web: https only" "$?" 2
 eq "web close with none open" "$("$CD" web close; echo $?)" 0
+# the key with a guide open: hide it / show it again as it was (SIGUSR1 to the browser), panel left closed
+stub qs 'echo "qs $*" >> "'"$T"'/qsweb.log"'
+( trap '' USR1; exec sleep 300 ) & WEBP2=$!; echo "$WEBP2" > "$T/web.pid"; echo shown > "$T/web.state"
+GAMING_DECK_PANEL_QML="$T/panel.qml" "$CD" panel >/dev/null 2>&1; eq "the key with a guide open: no new panel" "$(grep -c '^qs -n' "$T/qsweb.log" 2>/dev/null)" 0
+has "…the panel told to close instead" "$(cat "$T/qsweb.log" 2>/dev/null)" "call panel close"
+yes "…the guide is kept (hidden, not closed)" "kill -0 $WEBP2"
+kill "$WEBP2" 2>/dev/null; rm -f "$T/web.pid" "$T/web.state" "$T/qsweb.log"
 bash -c 'source "$1"; web_helper() { :; }; cmd_web https://example.org/' _ "$CD" >/dev/null 2>&1
 eq "no WebKit / layer-shell: the guide goes to the browser instead" "$?" 0
 # notes

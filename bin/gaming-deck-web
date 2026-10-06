@@ -7,7 +7,8 @@
 #   gaming-deck-web <https://…> [--back] [--fallback <https://…>] [--lang es|en]
 #     --back       reopen the in-game panel when this closes
 #     --fallback   load this instead when the first page isn't there (HTTP ≥ 400)
-# Esc or ✕ closes it; the panel's key (F6) closes it too (gaming-deck panel).
+# Esc goes back to the panel, ✕ closes it; the panel's key (F6) hides it and shows
+# it again as it was (SIGUSR1). Its state (shown/hidden) is in <pidfile>.state.
 import os
 import signal
 import subprocess
@@ -67,6 +68,14 @@ def main():
     except (OSError, ValueError):
         pass
     open(pidf, "w").write(str(os.getpid()))
+    statef = pidf[:-4] + ".state" if pidf.endswith(".pid") else pidf + ".state"
+
+    def save_state(s):
+        try:
+            open(statef, "w").write(s)
+        except OSError:
+            pass
+    save_state("shown")
 
     data = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "gaming-deck", "web")
     cache = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "gaming-deck", "web")
@@ -99,8 +108,10 @@ def main():
     # exclusive only to take the keyboard when it opens (Esc works at once, even if
     # the game holds the pointer), then on demand: a click on another window gives
     # it the keyboard (exclusive locked every other window out while this was open)
-    GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-    GLib.timeout_add(500, lambda: GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND) and False)
+    def grab():
+        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+        GLib.timeout_add(500, lambda: GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND) and False)
+    grab()
     mon = Gdk.Display.get_default().get_monitor(0)
     seat = Gdk.Display.get_default().get_default_seat()
     try:
@@ -200,7 +211,7 @@ def main():
 
     def on_key(_w, ev):
         if ev.keyval == Gdk.KEY_Escape:
-            close()
+            close()             # back to the panel (with --back)
             return True
         if ev.state & Gdk.ModifierType.MOD1_MASK and ev.keyval == Gdk.KEY_Left:
             view.go_back()
@@ -213,12 +224,25 @@ def main():
         state["back"] = False
         Gtk.main_quit()
         return False
+    # SIGUSR1 (the panel's key): hide, or show again exactly as it was
+    def on_toggle(*_):
+        if win.get_visible():
+            win.hide()
+            save_state("hidden")
+        else:
+            win.show_all()
+            grab()
+            view.grab_focus()
+            save_state("shown")
+        return True
     try:
         gi.require_version("GLibUnix", "2.0")
         from gi.repository import GLibUnix
-        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_term)
+        add = GLibUnix.signal_add
     except (ImportError, ValueError):
-        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_term)
+        add = GLib.unix_signal_add
+    add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_term)
+    add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, on_toggle)
 
     box.pack_start(bar, False, False, 0)
     box.pack_start(view, True, True, 0)
@@ -231,6 +255,7 @@ def main():
     try:
         if int(open(pidf).read().strip()) == os.getpid():
             os.remove(pidf)
+            os.remove(statef)
     except (OSError, ValueError):
         pass
     if state["back"]:

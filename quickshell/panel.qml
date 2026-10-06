@@ -75,7 +75,7 @@ ShellRoot {
         "Achievement unlocked": "Logro desbloqueado",
         "close": "cerrar", "move": "moverse", "reveal": "ver", "tabs": "pestañas", "Space": "Espacio", "Show hidden": "Mostrar ocultos",
         "Open over the game (Esc comes back here):": "Se abren encima del juego (Esc vuelve aquí):",
-        "Search": "Buscar", "on": "en", "wiki": "wiki"
+        "Search": "Buscar", "on": "en", "wiki": "wiki", "interactive map": "mapa interactivo"
     })
     function tr(s) { return lang === "es" && es[s] !== undefined ? es[s] : s; }
 
@@ -237,7 +237,8 @@ ShellRoot {
             if (!root.game.appid || root.idle % 4 === 3) {
                 root.refreshGame(function (changed) {
                     if (!root.game.appid) {
-                        if (!root.shown && ++root.idle > 6) Qt.quit();      // ~20 s without a game: done
+                        // ~20 s without a game: done, and a guide left open (hidden) goes too
+                        if (!root.shown && ++root.idle > 6) { Quickshell.execDetached([root.bin, "web", "close"]); Qt.quit(); }
                         return;
                     }
                     root.idle = 0;

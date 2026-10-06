@@ -2167,7 +2167,7 @@ Gaming
   ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
   wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
   guides <appid> / gopen <url>  Guide links (EliteGuías, Fextralife, Steam guides, wiki) · open one in the browser
-  web <https://…> [--back] [--fallback <https://…>] | web close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
+  web <https://…> [--back] [--fallback <https://…>] | web toggle|close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
   notes <appid> [set <text>]    Your notes for a game
   health                        Gaming health: multilib, GPU driver, Vulkan, 32-bit libraries, with fix commands (JSON)
 EOF
@@ -2814,12 +2814,14 @@ cmd_guides() {
     if [[ -n "$slug" ]]; then
         eg="https://www.eliteguias.com/guias/${slug:0:1}/$ini/$slug.php"; egt="https://www.eliteguias.com/trucos/${slug:0:1}/$slug.php"
     fi
-    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" --arg fx "$fx" --arg eg "$eg" --arg egt "$egt" '
+    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" --arg fx "$fx" --arg eg "$eg" --arg egt "$egt" --arg slug "${slug:-}" '
         ($n | @uri) as $q | ("https://www.eliteguias.com/buscar.php?q=" + $q) as $egq |
         # straight to the guide / achievements page of the game; its search when there is none
         [ {label:"EliteGuías", sub:"guide", url:(if $eg != "" then $eg else $egq end), fallback:$egq, search:($egq + "%20")},
           {label:"EliteGuías", sub:"achievements", url:(if $egt != "" then $egt else $egq + "%20logros" end), fallback:($egq + "%20logros")} ]
         + (if $fx != "" then [{label:"Fextralife", sub:"wiki", url:$fx, search:($fx + "/Special:Search?search=")}] else [] end)
+        # Map Genie: the game page by name (its list of games when there is no map)
+        + (if $slug != "" then [{label:"Map Genie", sub:"interactive map", url:("https://mapgenie.io/" + $slug), fallback:"https://mapgenie.io/"}] else [] end)
         + [
           {label:"Steam", sub:"community guides", url:("https://steamcommunity.com/app/" + $id + "/guides/")},
           {label:"Steam", sub:"global achievements", url:("https://steamcommunity.com/stats/" + $id + "/achievements/")} ]
@@ -2845,12 +2847,15 @@ web_helper() {
         && echo "$h"
     return 0
 }
+WEB_STATE="${WEB_PID%.pid}.state"      # shown | hidden, written by the browser
+web_shown() { web_running && [[ "$(cat "$WEB_STATE" 2>/dev/null)" != hidden ]]; }
 web_running() { local p; p="$(cat "$WEB_PID" 2>/dev/null)"; [[ "$p" =~ ^[0-9]+$ ]] && [[ -d "${PROC_ROOT:-/proc}/$p" ]]; }
 cmd_web() {
-    if [[ "${1:-}" == close ]]; then
-        web_running && kill "$(cat "$WEB_PID")" 2>/dev/null
-        return 0
-    fi
+    case "${1:-}" in
+        close) web_running && kill "$(cat "$WEB_PID")" 2>/dev/null; return 0 ;;
+        # hide / show it as it is (same page, same scroll): the panel's key does this
+        toggle) web_running && kill -USR1 "$(cat "$WEB_PID")" 2>/dev/null; return 0 ;;
+    esac
     [[ "${1:-}" =~ ^https:// ]] || { err "use: web <https://…> [--back] [--fallback <https://…>] | web close"; return 2; }
     local url="$1" back="" fb=""; shift
     while (( $# )); do
@@ -2953,8 +2958,11 @@ panel_key() {   # KEY | off
 cmd_panel() {
     case "${1:-toggle}" in
         toggle|show|hide)
-            # the key with a guide open over the game: close it, that's all
-            if [[ "${1:-toggle}" != show ]] && web_running; then cmd_web close; return 0; fi
+            # a guide open over the game: the key hides it and brings it back as it was
+            if [[ "${1:-toggle}" != show ]] && web_running; then
+                [[ "${1:-toggle}" == hide ]] && { web_shown && cmd_web toggle; panel_ipc close; return 0; }
+                panel_ipc close; cmd_web toggle; return 0
+            fi
             local fn="${1:-toggle}"; fn="${fn/show/open}"; fn="${fn/hide/close}"
             panel_ipc "$fn" && return 0
             [[ "${1:-toggle}" == hide ]] && return 0
