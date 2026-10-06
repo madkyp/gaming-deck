@@ -337,6 +337,7 @@ ShellRoot {
         }
         function sugLabel(x, applied, mark) {
             var l = (applied ? "✓ " : mark) + x.token + "  " + x.pct + "%";
+            if (x.installed === false) return l + win.t(" · NOT INSTALLED");
             if (x.kind === "env" && !applied) {
                 var mine = envValue(x.var);
                 if (mine !== null) l += win.t(" · you =") + mine;
@@ -350,11 +351,13 @@ ShellRoot {
             if (x.adapted) t += win.t("; value adapted to this PC");
             t += applied ? win.t(". Already in the profile.") : win.t(". Click to add, then SAVE.");
             // what the option does first, then how many players use it
+            if (x.installed === false)
+                t = win.t("Not installed on this PC: install it first, or the game won't start with it.") + "\n\n" + t.replace(win.t(". Click to add, then SAVE."), ".");
             return x.what ? win.t(x.what) + "\n\n" + t : t;
         }
         // add a suggestion to the editor (saved with SAVE, never automatically)
         function applySug(x) {
-            if (sugApplied(x)) return;
+            if (sugApplied(x) || x.installed === false) return;
             if (x.kind === "env") {
                 var name = x.token.split("=")[0];
                 var rest = gEnv.text.split(/\s+/).filter(function (e) { return e && e.split("=")[0] !== name; });
@@ -1767,7 +1770,7 @@ ShellRoot {
                                         required property var modelData
                                         property bool applied: win.sugApplied(modelData)
                                         label: win.sugLabel(modelData, applied, "★ ")
-                                        tint: pal.amber; active: true; opacity: applied ? 0.55 : 1.0
+                                        tint: pal.amber; active: true; opacity: modelData.installed === false ? 0.4 : (applied ? 0.55 : 1.0)
                                         tip: win.sugTip(modelData, applied)
                                         onClicked: win.applySug(modelData)
                                     }
@@ -1782,7 +1785,7 @@ ShellRoot {
                                         required property var modelData
                                         property bool applied: win.sugApplied(modelData)
                                         label: win.sugLabel(modelData, applied, "+ ")
-                                        tint: pal.ok; active: applied
+                                        tint: pal.ok; active: applied; opacity: modelData.installed === false ? 0.4 : 1.0
                                         tip: win.sugTip(modelData, applied)
                                         onClicked: win.applySug(modelData)
                                     }

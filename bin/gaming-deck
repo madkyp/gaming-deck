@@ -935,7 +935,14 @@ cmd_run() {
     fi
     [[ "$(jq -r '.gamemode' <<<"$p")" == true ]] && { have gamemoderun && pre+=(gamemoderun) || echo "  gamemode not installed" >> "$rlog"; }
     [[ "$(jq -r '.mangohud' <<<"$p")" == true ]] && { have mangohud && pre+=(mangohud) || echo "  mangohud not installed" >> "$rlog"; }
-    read -ra extra <<<"$(jq -r '.prefix' <<<"$p")"; pre+=("${extra[@]}")
+    read -ra extra <<<"$(jq -r '.prefix' <<<"$p")"
+    # a PREFIX whose program isn't installed would stop the game from starting (exit 127): start without it
+    if ((${#extra[@]})) && [[ ! "${extra[0]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && ! have "${extra[0]}" && [[ ! -x "${extra[0]}" ]]; then
+        echo "  prefix skipped: ${extra[0]} not installed" >> "$rlog"
+        notify "Gaming Deck" "$(game_label "$key"): ${extra[0]} isn't installed, so the game starts without its PREFIX (${extra[*]})."
+        extra=()
+    fi
+    pre+=("${extra[@]}")
     read -ra extra <<<"$(jq -r '.args' <<<"$p")"
     # OptiScaler loads as dxgi.dll unless told otherwise: with ReShade on dxgi
     # it goes to winmm.dll; its menu (Insert) moves to Page Down if Insert is ours
@@ -1653,7 +1660,17 @@ cmd_gsuggest() {
         | {index:true, vendor:$v, gpuGen:$gen, gpuName:$gname, similarLabel:($gen | gen_label),
            cores:$cores, screen:$res, window:$w.window,
            reports:$n, vendorReports:$nv, similarReports:(if $ns >= 5 then $ns else 0 end),
-           suggestions:(.[:16] | map(. + {what:($what[.token | split("=")[0]] // $what["_" + .kind] // "")}))}'
+           suggestions:(.[:16] | map(. + {what:($what[.token | split("=")[0]] // $what["_" + .kind] // "")}))}' \
+        | sug_mark_installed
+}
+# wrappers (gamescope, er-patcher…) get installed:true/false — adding a missing one would stop the game
+sug_mark_installed() {
+    local j w miss=()
+    j="$(cat)"
+    while IFS= read -r w; do
+        [[ -n "$w" ]] && ! have "$w" && miss+=("$w")
+    done < <(jq -r '.suggestions[]? | select(.kind == "wrapper") | .token | split(" ")[0]' <<<"$j" 2>/dev/null | sort -u)
+    jq -c --args '($ARGS.positional) as $m | if .suggestions then .suggestions |= map(if .kind == "wrapper" then . + {installed:((.token | split(" ")[0]) as $c | ($m | index($c)) == null)} else . end) else . end' "${miss[@]}" <<<"$j"
 }
 
 # --- shader caches -----------------------------------------------------------------

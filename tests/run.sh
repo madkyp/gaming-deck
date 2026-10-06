@@ -259,6 +259,9 @@ eq "wrapper applies env and appends args" "$O" "FOO=bar HUD=fps args=-launcher -
 has "wrapper goes through gamemoderun" "$(cat "$T/wrap.log")" gamemoderun
 O="$("$CD" run --profile default -- "$T/fake/game")"
 eq "no Steam id → default profile" "$O" "FOO= HUD= args="
+"$CD" gprofile set steam:200 'prefix=er-patcher-missing --' >/dev/null
+O="$(SteamAppId=200 "$CD" run "$T/fake/game" 2>&1)"
+eq "a PREFIX program that isn't installed is skipped: the game still starts" "$O" "FOO=bar HUD=fps args=-windowed"
 "$CD" gprofile reset steam:200 >/dev/null
 eq "reset drops the custom profile" "$("$CD" gprofile get steam:200 | jq -r .custom)" false
 
@@ -309,6 +312,7 @@ eq "+cvar value kept as one option" "$(sug '+fps_max 120')" "75/100/true"
 eq "env var suggested" "$(sug PROTON_ENABLE_WAYLAND=1)" "16/11/true"
 has "each option says what it does" "$(jq -r '.suggestions[] | select(.token == "PROTON_ENABLE_WAYLAND=1") | .what' <<<"$S")" "native Wayland window"
 eq "…an unknown launch option gets the generic text" "$(jq -r '.suggestions[] | select(.token == "-vulkan") | .what' <<<"$S")" "A launch option passed to the game itself: what it does depends on the game."
+eq "suggested programs say whether they are installed" "$(bash -c 'source "$1"; sug_mark_installed' _ "$CD" <<<'{"suggestions":[{"kind":"wrapper","token":"bash"},{"kind":"wrapper","token":"er-patcher-missing --x"},{"kind":"env","token":"A=1"}]}' | jq -c '[.suggestions[].installed]')" '[true,false,null]'
 eq "AMD-only variable hidden on NVIDIA (0 % of NVIDIA players)" "$(sug RADV_PERFTEST=gpl,nggc)" none
 eq "…and shown on AMD, quotes stripped" "$(GAMING_DECK_GPU_VENDOR=amd GAMING_DECK_GPU_NAME="AMD Radeon RX 7900 XTX" "$CD" gsuggest 100 | jq -r '.suggestions[] | select(.token == "RADV_PERFTEST=gpl,nggc") | .foryou')" true
 # shellcheck disable=SC2088  # a literal "~/lsfg" token, as players write it
