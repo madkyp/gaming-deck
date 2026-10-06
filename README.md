@@ -31,6 +31,7 @@ The sidebar has eight sections, in English or Spanish (**ESP / ENG** at the bott
 - **BENCH**: A/B benchmark of two launch variants (env, args, gamemode, Proton) with MangoHud frame logs: average FPS, 1 % / 0.1 % lows, p99 frametime and both frametime curves side by side.
 - **PREFIXES**: every Wine/Proton prefix (Steam, Heroic, Faugus, Bottles, standalone) with size, last use, version and orphans (games no longer installed); backup, instant clone (Btrfs reflink), restore, and delete with an automatic backup first.
 - **TEMPS** (per game, on the game's page): a one-line `CPU 54° · GPU 51°` readout at the top right while the game runs — the deck's own overlay (a Quickshell layer above fullscreen games, click-through, amber from 75 °C, red from 85 °C), not MangoHud. It closes with the game.
+- **IN-GAME PANEL** (`F6`, any key you like): over any Steam game, a panel with its **achievements** (unlocked / pending, the easiest first by global rarity, hidden ones covered until you ask), a **pop-up when you unlock one** (with how many players have it), **guides** — the game's Fandom wiki searched and read right there (text under CC BY-SA, with its source), plus EliteGuías and Steam guides one click away in the browser — and your own **notes** with timestamps. Like TEMPS it is a layer drawn by the compositor, **nothing is loaded into the game**, so it is the same for anti-cheat games (Elden Ring's EAC…). Achievements come from the files the Steam client keeps up to date itself: no Web API key. See [In-game panel](#-in-game-panel).
 - **FX** (visual shaders), per game: **ReShade** itself (downloaded from reshade.me, installed as links next to the game's .exe — API and 32/64-bit detected from the executable — loaded through Proton with DLL overrides, removed cleanly with OFF) or **vkBasalt** (a Vulkan layer). Quick looks (CAS sharpening, SMAA/FXAA, clarity) and **per-game presets from SweetFX Settings DB**, with the shaders they need fetched from the official packages. Presets downloaded by hand (e.g. from Nexus Mods: zip, 7z, rar or .ini) are **imported** in one click, with the shaders they bring. Free community packs that ReShade's own list lacks (e.g. NiceGuy-Shaders) are fetched too, and the black-and-white **TEST** look shows at once that the effects are drawn. **★ marks the right tool for each game** (ReShade or vkBasalt) and says why — e.g. a Vulkan game needs vkBasalt, a 2D RPG Maker game can't be hooked by either. When a game is set up, a single **READY** line shows the look and its keys; otherwise only the next step is shown. ReShade screenshots go to `~/Pictures/ReShade/<game>`. AMD and NVIDIA alike. Online games get a warning, anti-cheat ones a red one and a confirmation click. The menu key is configurable. **MY LIBRARY** scans every game — best preset on SweetFX DB by downloads, ReShade compatibility and depth settings from PCGamingWiki, anti-cheat risk — and **SET UP ALL** installs ReShade with them on every single-player game in one go (anti-cheat games are never touched).
 - **HEALTH**: what games need from the system — multilib, GPU driver (NVIDIA versions in sync after updates, `nvidia_drm modeset`; Mesa/RADV on AMD, AMDVLK warning), Vulkan devices, 32-bit libraries, `vm.max_map_count`, ntsync. Read-only: each problem shows the exact fix command with a COPY button.
 - **STATUS** (live, refreshed every 3 s while open): the game running now (uptime, Proton build, ReShade/vkBasalt in use, GameMode), **GPU** (driver, load, VRAM, power vs limit, temperature, clocks and what is holding it back — NVIDIA via nvidia-smi, AMD via amdgpu sysfs), **CPU · memory** (model, MHz, temperature, governor, RAM, swap/zram, kernel, `vm.max_map_count` and the **CPU scheduler**: switch to sched-ext **LAVD Gaming** now, only **WHILE PLAYING**, or **AT BOOT**), **LAST SESSIONS** (summary of each game session with a temperature graph), **WHILE PLAYING** (opt-in: hold notifications — dunst pause or swaync Do Not Disturb — and turn Hyprland's animations, blur and shadows off from the first game that starts until the last one closes; only what the deck changed is put back), **display** (resolution, Hz, VRR) and **gaming tools** (GameMode with a one-click **JOIN GROUP**, MangoHud, gamescope, Steam, ntsync, Proton builds, shaders), with a shortcut to HEALTH.
@@ -60,6 +61,24 @@ The sidebar has eight sections, in English or Spanish (**ESP / ENG** at the bott
 |---|---|
 | ![PREFIXES — Wine/Proton prefixes: backup, clone, delete](screenshots/prefixes.png) | ![MAINTENANCE — GE-Proton, clean-up, profile backup and self-update](screenshots/maintenance.png) |
 
+## 🏆 In-game panel
+
+```bash
+gaming-deck panel key F6        # the key (written into hyprland.lua/.conf between marker lines, backup kept); "off" removes it
+gaming-deck panel toast off     # no pop-ups for new achievements (on by default)
+```
+
+In game: **F6** opens / closes it, **Esc** closes it, **Tab** changes tab. ACHIEVEMENTS: **↑↓** move, **←→** filter, **H** shows the hidden ones, **Enter** looks the achievement up in the wiki. GUIDES: **/** searches the wiki, **↑↓ / PgUp PgDn** scroll a page, **Backspace** goes back. While it is open it has the keyboard; closed, the game gets every key (only F6 is taken by Hyprland).
+
+| Source | How | Notes |
+|---|---|---|
+| Your achievements | `~/.local/share/Steam/appcache/stats/` (Steam's own cache) | no API key; updated by Steam while you play, the pop-up follows it |
+| Global rarity | `ISteamUserStats/GetGlobalAchievementPercentagesForApp` | public, no key; cached a day |
+| Wiki | the game's Fandom wiki, MediaWiki API | found by name; `gaming-deck wiki <appid> set https://….fandom.com` if it picks none or the wrong one |
+| EliteGuías, Steam guides | links opened in your browser | their content isn't copied (EliteGuías forbids reproducing it) |
+
+Games launched through `gaming-deck run` get the pop-ups from the start; others once you have opened the panel. It closes itself a few seconds after the game.
+
 ## 🌑 Umbral compatibility
 
 Gaming Deck is compatible with **[Umbral](https://github.com/madkyp/umbral-project)** (`github.com/madkyp/umbral-project`), a GTK launcher for Battle.net (World of Warcraft…) and for Windows games from no store, running with Proton. Install both and they work together: Umbral's games show up in the LIBRARY next to Steam's.
@@ -81,7 +100,7 @@ Nothing is needed on Gaming Deck's side: it finds `umbral` in your `PATH` and re
 
 **Required:** [`quickshell`](https://quickshell.outfoxxed.me/) `>= 0.3`, `bash`, `coreutils`, `jq`, `libarchive` (`bsdtar`), `curl`, `polkit` + a graphical agent, a **Nerd Font** (*JetBrainsMono Nerd Font*), and Steam.
 
-**Optional:** `gamemode` (+ `lib32-gamemode`), `mangohud` (+ `lib32-mangohud`), `gamescope`, `vkbasalt` (+ `lib32-vkbasalt`, offered in FX), `libnotify`, `zenity` (IMPORT file chooser), `python` (reads a game's .exe to pick ReShade's API), `scx-tools` (CPU scheduler), [Umbral](https://github.com/madkyp/umbral-project), [Crisol](https://github.com/madkyp/crisol-app).
+**Optional:** `gamemode` (+ `lib32-gamemode`), `mangohud` (+ `lib32-mangohud`), `gamescope`, `vkbasalt` (+ `lib32-vkbasalt`, offered in FX), `libnotify`, `zenity` (IMPORT file chooser), `python` (reads a game's .exe to pick ReShade's API; the in-game panel's achievements and wiki), `scx-tools` (CPU scheduler), [Umbral](https://github.com/madkyp/umbral-project), [Crisol](https://github.com/madkyp/crisol-app).
 
 ---
 

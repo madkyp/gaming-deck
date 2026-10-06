@@ -14,6 +14,7 @@ trap 'pkill -f -- "$T/fake/" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home"
 export GAMING_DECK_UMBRAL_RUNNING="$T/umbral-running.json"   # never the real one
 export GAMING_DECK_SCX_RULE_OLD="$T/no-old-rule"   # never this PC's /etc
+export GAMING_DECK_PANEL_QML="$T/no-panel.qml"   # never a real panel (install.sh puts one in the test $HOME)
 export GAMING_DECK_FX_EXTRA_PACKAGES="$T/fx-extra.json"; echo "[]" > "$T/fx-extra.json"   # community packs: none unless a test adds one
 unset XDG_DATA_HOME XDG_CACHE_HOME XDG_CONFIG_HOME GAMING_DECK_APPS_DIR INSTALL_ANY_APPS_DIR GITHUB_TOKEN
 export LC_ALL=C.UTF-8
@@ -1345,6 +1346,121 @@ eq "default follows the locale (en_US)" "$(LC_ALL='' LC_MESSAGES='' LANG=en_US.U
 eq "saved choice wins over the locale" "$(LANG=en_US.UTF-8 "$CD" uilang)" es
 "$CD" uilang fr >/dev/null 2>&1; eq "unknown language refused" "$?" 2
 eq "…and the saved one is kept" "$("$CD" uilang)" es
+# --------------------------------------------------------- in-game panel ----
+section "in-game panel: achievements, wiki, guides, notes, key"
+PS="$T/psteam"; mkdir -p "$PS/config" "$PS/appcache/stats" "$PS/steamapps"
+export GAMING_DECK_STEAM_ROOT="$PS" GAMING_DECK_STEAM_RUNNING=0
+printf '"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n}\n' "$PS" > "$PS/steamapps/libraryfolders.vdf"
+printf '"AppState"\n{\n\t"appid"\t\t"700"\n\t"name"\t\t"Kingdom Come: Deliverance II"\n\t"installdir"\t\t"KCD2"\n\t"SizeOnDisk"\t\t"1"\n}\n' > "$PS/steamapps/appmanifest_700.acf"
+# two accounts, no MostRecent: the one that signed in last
+printf '"users"\n{\n\t"76561197960265738"\n\t{\n\t\t"Timestamp"\t\t"100"\n\t}\n\t"76561197960265748"\n\t{\n\t\t"Timestamp"\t\t"200"\n\t}\n}\n' > "$PS/config/loginusers.vdf"
+eq "Steam account: the newest sign-in when there's no MostRecent" "$(fn steam_account)" 20
+sed -i '0,/"Timestamp"\t\t"100"/s//"Timestamp"\t\t"100"\n\t\t"MostRecent"\t\t"1"/' "$PS/config/loginusers.vdf"
+eq "…MostRecent wins" "$(fn steam_account)" 10
+# Steam's binary KeyValues: a schema with 3 achievements over two blocks, and the user's bits
+python3 - "$PS/appcache/stats" <<'PY'
+import struct, sys
+def ser(d):
+    o = b''
+    for k, v in d.items():
+        kb = k.encode() + b'\0'
+        if isinstance(v, dict): o += b'\0' + kb + ser(v) + b'\x08'
+        elif isinstance(v, str): o += b'\x01' + kb + v.encode() + b'\0'
+        else: o += b'\x02' + kb + struct.pack('<i', v)
+    return o
+def ach(n, en, es, hidden=0):
+    return {'name': n, 'display': {'name': {'english': en, 'spanish': es}, 'desc': {'english': en + ' desc', 'spanish': es + ' desc'},
+            'hidden': str(hidden), 'icon': n + '.jpg', 'icon_gray': n + '_g.jpg'}}
+schema = {'700': {'gamename': 'KCD2', 'stats': {
+    '1': {'type': 'ACHIEVEMENTS', 'bits': {'0': ach('A0', 'First', 'Primero'), '31': ach('A31', 'Top bit', 'Bit alto')}},
+    '2': {'type': 'ACHIEVEMENTS', 'bits': {'6': ach('B6', 'Secret', 'Secreto', 1)}},
+    '3': {'type': 'INT', 'name': 'kills'}}}}
+open(sys.argv[1] + '/UserGameStatsSchema_700.bin', 'wb').write(ser(schema) + b'\x08')
+# bit 31 set: a negative int32 on disk
+user = {'cache': {'crc': 1, '1': {'data': -2147483647, 'AchievementTimes': {'0': 1700000000, '31': 1700000100}}, '2': {'data': 0}}}
+open(sys.argv[1] + '/UserGameStats_10_700.bin', 'wb').write(ser(user) + b'\x08')
+PY
+mkdir -p "$HOME/.cache/gaming-deck/ach"
+echo '{"achievementpercentages":{"achievements":[{"name":"B6","percent":"12.5"},{"name":"A0","percent":"80.0"}]}}' > "$HOME/.cache/gaming-deck/ach/700-global.json"
+"$CD" uilang en >/dev/null
+A="$("$CD" ach 700)"
+eq "achievements counted over every block (bit 31 included)" "$(jq -c '[.total, .unlocked, .percent]' <<<"$A")" "[3,2,66.7]"
+eq "names, unlock times, hidden flag" "$(jq -c '[.items[] | [.id, .name, .unlocked, .time, .hidden]]' <<<"$A")" \
+   '[["A0","First",true,1700000000,false],["A31","Top bit",true,1700000100,false],["B6","Secret",false,0,true]]'
+eq "global rarity from the cached public percentages" "$(jq -c '[.hasRarity, (.items[] | .rarity)]' <<<"$A")" "[true,80.0,null,12.5]"
+eq "colour icon when unlocked, grey one when not" "$(jq -r '[.items[0].icon, .items[2].icon] | map(split("/") | last) | join(" ")' <<<"$A")" "A0.jpg B6_g.jpg"
+eq "the account's stats file is the one watched for new unlocks" "$(jq -r .statsFile <<<"$A")" "$PS/appcache/stats/UserGameStats_10_700.bin"
+"$CD" uilang es >/dev/null
+eq "Spanish names with the deck in Spanish (English kept for the wiki)" "$("$CD" ach 700 | jq -c '.items[0] | [.name, .nameEn, .desc]')" '["Primero","First","Primero desc"]'
+"$CD" uilang en >/dev/null
+eq "a game Steam has no achievements for" "$("$CD" ach 701 | jq -r .error)" noschema
+"$CD" ach x >/dev/null 2>&1; eq "ach wants an appid" "$?" 2
+# the game being played
+mkdir -p "$T/pproc/5100" "$T/pproc/5200"
+printf 'SteamAppId=700\0' > "$T/pproc/5100/environ"; printf 'SteamAppId=0\0' > "$T/pproc/5200/environ"
+eq "ingame: the running Steam game, with its name" "$(PROC_ROOT="$T/pproc" "$CD" ingame | jq -c '[.appid, .name, .pid]')" '["700","Kingdom Come: Deliverance II",5100]'
+mkdir -p "$T/pproc0"; eq "ingame: nothing running" "$(PROC_ROOT="$T/pproc0" "$CD" ingame)" "{}"
+# wiki: which Fandom wiki fits the game
+eq "wiki candidates: the full name first, sequel number dropped" "$(fn wiki_candidates "Kingdom Come: Deliverance II" | head -2 | paste -sd ' ')" "kingdomcomedeliverance kingdom-come-deliverance"
+has "…and the subtitle alone (Khazan)" "$(fn wiki_candidates "The First Berserker: Khazan")" khazan
+eq "a sequel fits its series' wiki" "$(fn wiki_score "Kingdom Come: Deliverance II" "Kingdom Come: Deliverance Wiki")" 100
+yes "another game of the series doesn't" "(( $(fn wiki_score "Tainted Grail: The Fall of Avalon" "Tainted Grail: Conquest Wiki") < 60 ))"
+"$CD" wiki 700 set https://evil.example.com >/dev/null 2>&1; eq "only Fandom wiki addresses" "$?" 2
+"$CD" wiki 700 set https://kingdom-come-deliverance.fandom.com/ >/dev/null
+eq "a wiki set by hand" "$("$CD" wiki 700 | jq -r .base)" "https://kingdom-come-deliverance.fandom.com"
+G="$("$CD" guides 700)"
+eq "guide links: EliteGuías (game, achievements), Steam, the wiki" "$(jq -r 'map(.label + ":" + .sub) | join(",")' <<<"$G")" \
+   "EliteGuías:guide,EliteGuías:achievements,Steam:community guides,Steam:global achievements,Wiki:kingdom-come-deliverance.fandom.com"
+eq "EliteGuías: its own search with the game's name" "$(jq -r '.[0].url' <<<"$G")" "https://www.eliteguias.com/buscar.php?q=Kingdom%20Come%3A%20Deliverance%20II"
+eq "Steam guides of this game" "$(jq -r '.[2].url' <<<"$G")" "https://steamcommunity.com/app/700/guides/"
+"$CD" wiki 700 clear; GAMING_DECK_FANDOM_FMT="file://$T/nofandom/%s" "$CD" wiki 700 >/dev/null
+eq "no wiki found: remembered (not looked up on every open)" "$(jq -r '."700".base' "$HOME/.local/share/gaming-deck/gaming/wiki.json")" ""
+eq "…and no wiki link" "$("$CD" guides 700 | jq -r 'map(select(.label == "Wiki")) | length')" 0
+eq "no wiki: empty search" "$("$CD" wiki 700 search Henry)" "[]"
+cat > "$T/wikipage.json" <<'WJ'
+{"parse":{"title":"Henry","text":{"*":"<aside class=\"portable-infobox\"><h2>Henry</h2><div>Age 20</div></aside><p>Henry is the <b>hero</b>.<img src=\"x.png\"/></p><table><tr><td>stats</td></tr></table><h2><span>Story</span><span class=\"mw-editsection\">edit</span></h2><ul><li>Skalitz</li><li>Rattay<sup class=\"reference\">[1]</sup></li></ul>"}}}
+WJ
+W="$(fn wiki_text https://kcd.fandom.com "KCD Wiki" < "$T/wikipage.json")"
+eq "wiki page → readable text (no infobox, tables, edit links or references)" "$(jq -r .text <<<"$W")" "$(printf 'Henry is the hero.\n\n§ Story\n\n• Skalitz\n• Rattay')"
+eq "…with its address and licence" "$(jq -c '[.url, .source, .license]' <<<"$W")" '["https://kcd.fandom.com/wiki/Henry","KCD Wiki","CC BY-SA 3.0"]'
+# notes
+"$CD" notes 700 set "$(printf 'línea 1\n[19:42] jefe')"
+eq "notes are kept as written" "$("$CD" notes 700)" "$(printf 'línea 1\n[19:42] jefe')"
+eq "no notes yet: empty" "$("$CD" notes 701)" ""
+"$CD" gopen "file:///etc/passwd" >/dev/null 2>&1; eq "gopen: https and steam:// only" "$?" 2
+# the activation key in Hyprland's config
+HYD="$T/hypr"; mkdir -p "$HYD"; printf 'hl.bind("SUPER + I", hl.dsp.exec_cmd("x"))\n' > "$HYD/hyprland.lua"
+stub hyprctl 'case "$1" in binds) cat "'"$T"'/binds.json" 2>/dev/null || echo "[]" ;; *) exit 0 ;; esac'
+export GAMING_DECK_HYPR_DIR="$HYD"
+"$CD" panel key F6 >/dev/null; "$CD" panel key F6 >/dev/null
+eq "key written once in hyprland.lua, however many times it's set" "$(grep -c 'hl.bind("F6", hl.dsp.exec_cmd(".* panel")' "$HYD/hyprland.lua")" 1
+has "…next to the user's own binds, which stay" "$(cat "$HYD/hyprland.lua")" 'hl.bind("SUPER + I"'
+yes "…and the config was backed up first" "[[ -f '$HYD/hyprland.lua.gaming-deck.bak' ]]"
+"$CD" panel key "SUPER + G" >/dev/null
+eq "changing the key replaces it" "$(grep -c 'gaming-deck: \|hl.bind("SUPER + G", hl.dsp.exec_cmd(".* panel")\|"F6"' "$HYD/hyprland.lua")" 1
+echo '[{"modmask":0,"key":"F7","dispatcher":"exec","arg":"obs-toggle"},{"modmask":64,"key":"G","dispatcher":"__lua","arg":"238","description":"Gaming Deck: in-game panel"}]' > "$T/binds.json"
+"$CD" panel key "SUPER + G" >/dev/null 2>&1; eq "our own bind (Lua: only its description tells) isn't a conflict" "$?" 0
+"$CD" panel key F7 >/dev/null 2>&1; eq "a key Hyprland already uses is refused" "$?" 3
+"$CD" panel key 'F6"); os.exit(' >/dev/null 2>&1; eq "only key names (nothing that breaks out of the Lua string)" "$?" 2
+"$CD" panel key off >/dev/null
+eq "key off: the user's config is as it was" "$(cat "$HYD/hyprland.lua")" 'hl.bind("SUPER + I", hl.dsp.exec_cmd("x"))'
+rm -f "$HYD/hyprland.lua"*; printf 'bind = SUPER, I, exec, x\n' > "$HYD/hyprland.conf"
+"$CD" panel key "SUPER + SHIFT + P" >/dev/null
+has "hyprland.conf (no Lua): a classic bind line" "$(cat "$HYD/hyprland.conf")" "bind = SUPER SHIFT, P, exec, "
+unset GAMING_DECK_HYPR_DIR
+# run starts the panel hidden, to pop up achievements unlocked while playing
+stub qs 'case "$1" in ipc) exit 1 ;; esac; echo "qs $* show=$CD_PANEL_SHOW" >> "'"$T"'/qs.log"'
+touch "$T/panel.qml"; export GAMING_DECK_PANEL_QML="$T/panel.qml"
+rm -f "$T/qs.log"; SteamAppId=700 "$CD" run "$T/fake/ogame" >/dev/null
+for _ in $(seq 25); do [[ -s "$T/qs.log" ]] && break; sleep 0.2; done
+has "run starts the panel hidden" "$(cat "$T/qs.log")" "qs -n -p $T/panel.qml show=0"
+rm -f "$T/qs.log"; "$CD" panel >/dev/null
+for _ in $(seq 25); do [[ -s "$T/qs.log" ]] && break; sleep 0.2; done
+has "the key opens it (shown) when it isn't running" "$(cat "$T/qs.log")" "show=1"
+"$CD" panel toast off >/dev/null; sleep 0.3; rm -f "$T/qs.log"; SteamAppId=700 "$CD" run "$T/fake/ogame" >/dev/null; sleep 0.5
+yes "pop-ups off: run leaves it alone" "[[ ! -e '$T/qs.log' ]]"
+eq "panel status" "$("$CD" panel status | jq -c '[.key, .toast, .installed, .running]')" '["SUPER + SHIFT + P",false,true,false]'
+export GAMING_DECK_PANEL_QML="$T/no-panel.qml"; unset GAMING_DECK_STEAM_ROOT GAMING_DECK_STEAM_RUNNING
 # every key of es.js must still be a string of the GUI or the backend, or it is dead
 src="$(cat "$ROOT/quickshell/shell.qml" "$CD")"; src="${src//\'\"\'\"\'/\'}"
 dead=0

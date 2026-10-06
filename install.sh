@@ -94,6 +94,7 @@ echo "→ version   ${commit:0:7}"
 # the GUI goes last: a running deck reloads as soon as shell.qml changes
 echo "→ GUI       ~/.config/quickshell/gaming-deck/shell.qml"
 install -Dm644 "$SRC/quickshell/overlay.qml" "$HOME/.config/quickshell/gaming-deck-overlay/shell.qml"
+install -Dm644 "$SRC/quickshell/panel.qml" "$HOME/.config/quickshell/gaming-deck-panel/shell.qml"
 install -Dm644 "$SRC/quickshell/es.js" "$HOME/.config/quickshell/gaming-deck/es.js"
 install -Dm644 "$SRC/quickshell/shell.qml" "$HOME/.config/quickshell/gaming-deck/shell.qml"
 
@@ -107,6 +108,10 @@ fi
 echo
 echo "✔ Installed."
 echo "  Run it with:  qs -c gaming-deck   (or \"Gaming Deck\" from your app menu)"
+# the in-game panel's key, once (it edits Hyprland's config, with a backup)
+if [[ -z "$(jq -r '.key // empty' "$HOME/.local/share/gaming-deck/gaming/panel.json" 2>/dev/null)" ]]; then
+    echo "  In-game panel (achievements, guides, notes): set its key with  gaming-deck panel key F6"
+fi
 echo
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) : ;;

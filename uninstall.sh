@@ -2,11 +2,15 @@
 # Uninstaller for Gaming Deck — removes only the deck itself
 set -euo pipefail
 
+# the in-game panel's key in Hyprland's config goes first (it's the deck that removes it)
+[[ -x "$HOME/.local/bin/gaming-deck" ]] && "$HOME/.local/bin/gaming-deck" panel key off >/dev/null 2>&1 || true
 rm -f "$HOME/.local/bin/gaming-deck"
 rm -f "$HOME/.config/quickshell/gaming-deck/shell.qml"
 rm -f "$HOME/.config/quickshell/gaming-deck/es.js"
 rm -f "$HOME/.config/quickshell/gaming-deck-overlay/shell.qml"
 rmdir "$HOME/.config/quickshell/gaming-deck-overlay" 2>/dev/null || true
+rm -f "$HOME/.config/quickshell/gaming-deck-panel/shell.qml"
+rmdir "$HOME/.config/quickshell/gaming-deck-panel" 2>/dev/null || true
 rmdir "$HOME/.config/quickshell/gaming-deck" 2>/dev/null || true
 rm -f "$HOME/.local/share/applications/gaming-deck.desktop"
 rm -f "$HOME/.local/share/icons/hicolor/scalable/apps/gaming-deck.svg"

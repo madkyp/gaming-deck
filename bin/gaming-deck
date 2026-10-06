@@ -967,6 +967,7 @@ cmd_run() {
     # overlay follows our pid) and see how it ended
     [[ "$(jq -r '.overlay' <<<"$p")" == true ]] && { cmd_overlay $$ || echo "  overlay not started" >> "$rlog"; }
     session_begin "$key" $$
+    panel_autostart
     local t0 child rc rec=""
     t0="$(date +%s)"
     "${pre[@]}" "$@" "${extra[@]}" &
@@ -2161,6 +2162,11 @@ Gaming
   session <pid> <key>           For launchers like Umbral: TEMPS + scheduler while <pid> runs
   hook <umbral:id>              For Umbral: env (ReShade/vkBasalt) + TEMPS for a game it launches (JSON)
   temps [pid] / overlay [pid]   CPU/GPU °C · on-screen temperature line until <pid> exits (no pid: 10 s preview)
+  panel [toggle|key <KEY|off>|toast on|off|status]   In-game panel (F6): achievements, guides, notes over the game
+  ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
+  wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
+  guides <appid> / gopen <url>  Guide links (EliteGuías, Steam guides, wiki) · open one in the browser
+  notes <appid> [set <text>]    Your notes for a game
   health                        Gaming health: multilib, GPU driver, Vulkan, 32-bit libraries, with fix commands (JSON)
 EOF
 }
@@ -2461,6 +2467,431 @@ cmd_overlay() {
     mkdir -p "$STATE_DIR/logs"
     env -u LD_LIBRARY_PATH -u LD_PRELOAD CD_OVERLAY_PID="$pid" CD_OVERLAY_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
         setsid -f qs -p "$OVERLAY_QML" >"$STATE_DIR/logs/overlay.log" 2>&1 </dev/null
+}
+
+# --- in-game panel (F6): achievements, guides, notes -----------------------------
+# A Quickshell layer over the game, like TEMPS: nothing is loaded into the
+# game's process, so it is the same for games with anti-cheat (EAC, BattlEye…).
+# Achievements come from the files the Steam client itself keeps up to date in
+# appcache/stats (no Web API key); global rarity from Steam's public, keyless
+# GetGlobalAchievementPercentagesForApp. Guides: the game's Fandom wiki through
+# its MediaWiki API (text under CC BY-SA, shown with its source), and links
+# that open in the browser (EliteGuías, Steam guides): their content is never
+# copied, as their terms ask.
+PANEL_QML="${GAMING_DECK_PANEL_QML:-$HOME/.config/quickshell/gaming-deck-panel/shell.qml}"
+PANEL_SETTINGS="$GAMING_DIR/panel.json"
+NOTES_DIR="$GAMING_DIR/notes"
+ACH_CACHE="$CACHE_HOME/gaming-deck/ach"
+WIKI_CACHE="$CACHE_HOME/gaming-deck/wiki"
+WIKI_MAP="$GAMING_DIR/wiki.json"
+STEAM_API="${GAMING_DECK_STEAM_API:-https://api.steampowered.com}"
+FANDOM_FMT="${GAMING_DECK_FANDOM_FMT:-https://%s.fandom.com}"
+DECK_UA="GamingDeck/1 (+https://github.com/madkyp/gaming-deck)"
+PANEL_MARK_BEGIN="gaming-deck panel: managed by 'gaming-deck panel key'"
+PANEL_MARK_END="end of gaming-deck panel"
+
+panel_setting() {   # name default → value
+    local v; v="$(jq -r --arg k "$1" 'if has($k) then .[$k] | tostring else empty end' "$PANEL_SETTINGS" 2>/dev/null)"   # (// would drop false)
+    echo "${v:-$2}"
+}
+panel_setting_set() {   # name json-value
+    mkdir -p "$GAMING_DIR"
+    local cur='{}'; [[ -f "$PANEL_SETTINGS" ]] && cur="$(cat "$PANEL_SETTINGS")"
+    jq --arg k "$1" --argjson v "$2" '.[$k] = $v' <<<"$cur" > "$PANEL_SETTINGS.tmp" && mv "$PANEL_SETTINGS.tmp" "$PANEL_SETTINGS"
+}
+
+# the Steam account (32-bit id) signed in: MostRecent in loginusers.vdf, else
+# the one that signed in last (newer clients don't always write MostRecent)
+steam_account() {
+    local f s; f="$(steam_root)/config/loginusers.vdf"
+    [[ -f "$f" ]] || return 0
+    s="$(awk '/^\t"[0-9]+"$/ { gsub(/[\t"]/, ""); id = $0 }
+              /"MostRecent"[ \t]+"1"/ { mr = id }
+              /"Timestamp"/ { gsub(/[^0-9]/, "", $2); if ($2 + 0 >= ts) { ts = $2 + 0; last = id } }
+              END { print (mr != "" ? mr : last) }' "$f")"
+    [[ "$s" =~ ^[0-9]{17}$ ]] && echo $(( s - 76561197960265728 ))
+    return 0
+}
+game_name() {   # appid → name from its manifest
+    steam_games | awk -v i="$1" 'NR % 5 == 1 { x = $0 } NR % 5 == 2 && x == i { print; exit }'
+}
+
+# ingame → {"appid","name","pid"} of the Steam game being played ({} when none):
+# the focused window's game when it is one, else the newest running game
+cmd_ingame() {
+    local id="" pid="" w
+    if have hyprctl; then
+        w="$(hyprctl activewindow -j 2>/dev/null | jq -r '.pid // empty' 2>/dev/null)"
+        if [[ "$w" =~ ^[0-9]+$ && -r "${PROC_ROOT:-/proc}/$w/environ" ]]; then
+            id="$(tr '\0' '\n' < "${PROC_ROOT:-/proc}/$w/environ" 2>/dev/null | sed -n 's/^SteamAppId=\([0-9]*\)$/\1/p' | head -1)"
+            [[ "$id" == 0 ]] && id=""; [[ -n "$id" ]] && pid="$w"
+        fi
+    fi
+    if [[ -z "$id" ]]; then
+        read -r id pid < <(running_games | sort -t$'\t' -k2,2n | tail -1 | tr '\t' ' ')
+    fi
+    [[ -n "$id" ]] || { echo '{}'; return 0; }
+    local since=0; [[ -d "${PROC_ROOT:-/proc}/$pid" ]] && since="$(stat -c %Y "${PROC_ROOT:-/proc}/$pid" 2>/dev/null || echo 0)"
+    jq -nc --arg id "$id" --arg n "$(game_name "$id")" --argjson pid "${pid:-0}" --argjson since "${since:-0}" \
+        '{appid:$id, name:(if $n == "" then null else $n end), pid:$pid, since:(if $since > 0 then $since else null end)}'
+}
+
+# global unlock percentages, cached a day (public endpoint, no key)
+ach_rarity() {   # appid → path of the cached JSON (empty when unavailable)
+    local f="$ACH_CACHE/$1-global.json"
+    mkdir -p "$ACH_CACHE"
+    if [[ ! -s "$f" || -n "$(find "$f" -mmin +1440 2>/dev/null)" ]]; then
+        curl -fsSL -m 6 -A "$DECK_UA" "$STEAM_API/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=$1" -o "$f.tmp" 2>/dev/null \
+            && jq -e '.achievementpercentages.achievements' "$f.tmp" >/dev/null 2>&1 && mv "$f.tmp" "$f"
+        rm -f "$f.tmp"
+    fi
+    [[ -s "$f" ]] && echo "$f"
+    return 0
+}
+
+# ach <appid> → this account's achievements for the game (JSON)
+cmd_ach() {
+    local id="$1" acc stats lang
+    [[ "$id" =~ ^[0-9]+$ ]] || { err "use: ach <appid>"; return 2; }
+    have python3 || { echo '{"error":"python"}'; return 0; }
+    stats="$(steam_root)/appcache/stats"; acc="$(steam_account)"
+    lang="english"; [[ "$(cmd_uilang)" == es ]] && lang="spanish"
+    python3 - "$stats" "${acc:-}" "$id" "$lang" "$(ach_rarity "$id")" <<'PY'
+import json, os, struct, sys, glob
+stats, acc, app, lang, rar = sys.argv[1:6]
+
+def kv(b, i=0):
+    # Steam's binary KeyValues: type byte, NUL-terminated key, value; 8 closes a block
+    d = {}
+    while i < len(b):
+        t = b[i]; i += 1
+        if t == 8: return d, i
+        j = b.index(0, i); k = b[i:j].decode('utf-8', 'replace'); i = j + 1
+        if t == 0: v, i = kv(b, i)
+        elif t == 1: j = b.index(0, i); v = b[i:j].decode('utf-8', 'replace'); i = j + 1
+        elif t in (2, 4, 6): v = struct.unpack_from('<i', b, i)[0]; i += 4
+        elif t == 3: v = struct.unpack_from('<f', b, i)[0]; i += 4
+        elif t in (7, 10): v = struct.unpack_from('<Q', b, i)[0]; i += 8
+        else: raise ValueError('type %d' % t)
+        d[k] = v
+    return d, i
+
+def load(p):
+    with open(p, 'rb') as f: return kv(f.read())[0]
+
+schema_f = os.path.join(stats, 'UserGameStatsSchema_%s.bin' % app)
+if not os.path.isfile(schema_f):
+    print(json.dumps({'appid': app, 'error': 'noschema'})); sys.exit()
+user_f = os.path.join(stats, 'UserGameStats_%s_%s.bin' % (acc, app)) if acc else ''
+if not (user_f and os.path.isfile(user_f)):
+    # no account found: the newest stats file of this game
+    c = sorted(glob.glob(os.path.join(stats, 'UserGameStats_*_%s.bin' % app)), key=os.path.getmtime)
+    user_f = c[-1] if c else user_f
+try:
+    sch = load(schema_f)[app]
+    user = load(user_f).get('cache', {}) if user_f and os.path.isfile(user_f) else {}
+except Exception as e:
+    print(json.dumps({'appid': app, 'error': 'parse', 'detail': str(e)})); sys.exit()
+pct = {}
+if rar:
+    try:
+        for a in json.load(open(rar))['achievementpercentages']['achievements']:
+            pct[a['name']] = float(a['percent'])
+    except Exception: pass
+
+def txt(d, k):
+    v = (d or {}).get(k)
+    if isinstance(v, dict): return v.get(lang) or v.get('english') or ''
+    return v or ''
+
+items = []
+for bid, blk in sch.get('stats', {}).items():
+    bits = blk.get('bits') if isinstance(blk, dict) else None
+    if not isinstance(bits, dict): continue
+    ub = user.get(bid, {}) if isinstance(user.get(bid), dict) else {}
+    data = ub.get('data', 0) & 0xFFFFFFFF
+    times = ub.get('AchievementTimes', {}) or {}
+    for b, a in bits.items():
+        disp = a.get('display', {}) or {}
+        got = bool(data >> int(b) & 1)
+        icon = disp.get('icon' if got else 'icon_gray') or disp.get('icon') or ''
+        items.append({
+            'id': a.get('name', ''), 'name': txt(disp, 'name'), 'desc': txt(disp, 'desc'),
+            'nameEn': (disp.get('name') or {}).get('english', '') if isinstance(disp.get('name'), dict) else txt(disp, 'name'),
+            'hidden': bool(int(disp.get('hidden', 0) or 0)), 'unlocked': got,
+            'time': int(times.get(b, 0) or 0) if got else 0,
+            'icon': ('https://cdn.fastly.steamstatic.com/steamcommunity/public/images/apps/%s/%s' % (app, icon)) if icon else '',
+            'rarity': pct.get(a.get('name', '')),
+        })
+n = len(items); u = sum(1 for i in items if i['unlocked'])
+print(json.dumps({'appid': app, 'game': sch.get('gamename', ''), 'lang': lang, 'total': n, 'unlocked': u,
+                  'percent': round(100.0 * u / n, 1) if n else 0, 'hasRarity': bool(pct),
+                  'statsFile': user_f, 'items': items}, ensure_ascii=False))
+PY
+}
+
+# --- wiki (Fandom, MediaWiki API) ---
+# the wiki candidates for a game name, and how well a wiki's name fits it
+wiki_candidates() {   # name → subdomains, best guess first
+    python3 - "$1" <<'PY'
+import re, sys, unicodedata
+n = unicodedata.normalize('NFKD', sys.argv[1]).encode('ascii', 'ignore').decode().lower()
+def slugs(s):
+    w = re.findall(r'[a-z0-9]+', s)
+    while w and re.fullmatch(r'(i{1,3}|iv|v|vi{1,3}|\d+)', w[-1]): w = w[:-1]
+    return [''.join(w), '-'.join(w)] if w else []
+out = []
+parts = [p for p in re.split(r'\s*[:\-–—]\s+', n) if p]
+for s in [n] + parts[:1] + parts[1:][-1:] + [re.sub(r'^the\s+', '', n)]:
+    for c in slugs(s):
+        if c and c not in out: out.append(c)
+print('\n'.join(out[:8]))
+PY
+}
+wiki_score() {   # game name · wiki name → 0..100 (share of the game's words found in the wiki's name)
+    python3 - "$1" "$2" <<'PY'
+import re, sys, unicodedata
+a = lambda s: unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode().lower()
+stop = {'the', 'of', 'and', 'a', 'an', 'de', 'la', 'el', 'wiki', 'ii', 'iii', 'iv', 'remastered', 'edition', 'definitive', 'goty'}
+w = [x for x in re.findall(r'[a-z0-9]+', a(sys.argv[1])) if len(x) > 1 and x not in stop and not x.isdigit()]
+site = ''.join(re.findall(r'[a-z0-9]+', a(sys.argv[2])))
+print(int(100 * sum(1 for x in w if x in site) / len(w)) if w else 0)
+PY
+}
+wiki_get() {   # appid → {"base","name","articles"} or {} (looked up once a week when nothing fits)
+    local id="$1" name map='{}' e best="" bs=0 ba=0 c info url sn arts sc
+    [[ -f "$WIKI_MAP" ]] && map="$(cat "$WIKI_MAP")"
+    e="$(jq -c --arg i "$id" '.[$i] // empty' <<<"$map")"
+    if [[ -n "$e" ]]; then
+        if [[ "$(jq -r '.base // ""' <<<"$e")" != "" || $(( $(date +%s) - $(jq -r '.checked // 0' <<<"$e") )) -lt 604800 ]]; then
+            jq -c 'if .base == "" then {} else {base, name, articles} end' <<<"$e"; return 0
+        fi
+    fi
+    name="$(game_name "$id")"; [[ -z "$name" ]] && { echo '{}'; return 0; }
+    have python3 || { echo '{}'; return 0; }
+    while IFS= read -r c; do
+        [[ -n "$c" ]] || continue
+        # -L: Fandom redirects old names (liesofp → lies-of-p); the final address is the wiki's
+        info="$(curl -fsSL -m 6 -A "$DECK_UA" -w '\n%{url_effective}' \
+                "$(printf "$FANDOM_FMT" "$c")/api.php?action=query&meta=siteinfo&siprop=general%7Cstatistics&format=json" 2>/dev/null)" || continue
+        url="$(tail -1 <<<"$info")"; url="${url%%/api.php*}"
+        sn="$(sed '$d' <<<"$info" | jq -r '.query.general.sitename // empty' 2>/dev/null)"
+        arts="$(sed '$d' <<<"$info" | jq -r '.query.statistics.articles // 0' 2>/dev/null)"
+        [[ -n "$sn" && "${arts:-0}" -ge 10 ]] || continue
+        sc="$(wiki_score "$name" "$sn")"
+        if (( sc >= 60 && (sc > bs || (sc == bs && arts > ba)) )); then best="$(jq -nc --arg b "$url" --arg n "$sn" --argjson a "$arts" '{base:$b, name:$n, articles:$a}')"; bs=$sc; ba=$arts; fi
+    done < <(wiki_candidates "$name")
+    mkdir -p "$GAMING_DIR"
+    jq --arg i "$id" --argjson e "${best:-"{\"base\":\"\"}"}" --argjson t "$(date +%s)" '.[$i] = ($e + {checked:$t, manual:false})' <<<"$map" > "$WIKI_MAP.tmp" && mv "$WIKI_MAP.tmp" "$WIKI_MAP"
+    echo "${best:-"{}"}"
+}
+# wiki <appid> [search <text> | page <title> | set <url> | clear]
+cmd_wiki() {
+    local id="$1" act="${2:-}" w base f map='{}'
+    [[ "$id" =~ ^[0-9]+$ ]] || { err "use: wiki <appid> [search <text>|page <title>|set <url>|clear]"; return 2; }
+    [[ -f "$WIKI_MAP" ]] && map="$(cat "$WIKI_MAP")"
+    case "$act" in
+        set)
+            [[ "${3:-}" =~ ^https://[A-Za-z0-9.-]+\.fandom\.com(/[a-z-]+)?/?$ ]] || { err "use a Fandom wiki address, e.g. https://eldenring.fandom.com"; return 2; }
+            mkdir -p "$GAMING_DIR"; base="${3%/}"
+            jq --arg i "$id" --arg b "$base" --argjson t "$(date +%s)" '.[$i] = {base:$b, name:($b | sub("^https://"; "")), articles:0, checked:$t, manual:true}' <<<"$map" > "$WIKI_MAP.tmp" && mv "$WIKI_MAP.tmp" "$WIKI_MAP"
+            log "✔ Wiki for $id: $base"; return 0 ;;
+        clear)
+            [[ -f "$WIKI_MAP" ]] && jq --arg i "$id" 'del(.[$i])' <<<"$map" > "$WIKI_MAP.tmp" && mv "$WIKI_MAP.tmp" "$WIKI_MAP"
+            return 0 ;;
+    esac
+    w="$(wiki_get "$id")"; base="$(jq -r '.base // empty' <<<"$w")"
+    case "$act" in
+        "") echo "$w" ;;
+        search)
+            [[ -n "$base" ]] || { echo '[]'; return 0; }
+            curl -fsSL -m 8 -A "$DECK_UA" -G "$base/api.php" --data-urlencode "srsearch=${3:-}" \
+                --data-urlencode "action=query" --data-urlencode "list=search" --data-urlencode "srlimit=12" --data-urlencode "format=json" 2>/dev/null \
+                | jq -c '[.query.search[]? | {title}]' 2>/dev/null || echo '{"error":"net"}' ;;
+        page)
+            [[ -n "$base" && -n "${3:-}" ]] || { echo '{}'; return 0; }
+            mkdir -p "$WIKI_CACHE/$id"
+            f="$WIKI_CACHE/$id/$(printf '%s' "$3" | md5sum | cut -c1-16).json"
+            if [[ ! -s "$f" || -n "$(find "$f" -mmin +10080 2>/dev/null)" ]]; then
+                curl -fsSL -m 10 -A "$DECK_UA" -G "$base/api.php" --data-urlencode "page=$3" --data-urlencode "action=parse" \
+                    --data-urlencode "prop=text" --data-urlencode "redirects=1" --data-urlencode "disabletoc=1" --data-urlencode "format=json" 2>/dev/null \
+                    | wiki_text "$base" "$(jq -r '.name // ""' <<<"$w")" > "$f.tmp" && jq -e '.text' "$f.tmp" >/dev/null 2>&1 && mv "$f.tmp" "$f"
+                rm -f "$f.tmp"
+            fi
+            if [[ -s "$f" ]]; then cat "$f"; else echo '{"error":"net"}'; fi ;;
+        *) err "use: wiki <appid> [search <text>|page <title>|set <url>|clear]"; return 2 ;;
+    esac
+}
+# MediaWiki parse JSON (stdin) → {"title","url","text","source","license"}: readable
+# text only (infoboxes, tables, navigation and references left out)
+wiki_text() {   # base · wiki name
+    python3 -c '
+import html.parser, json, re, sys, urllib.parse
+base, site = sys.argv[1], sys.argv[2]
+d = json.load(sys.stdin)["parse"]
+SKIP = {"aside", "table", "script", "style", "figure", "sup", "nav", "noscript", "gallery"}
+VOID = {"br", "img", "hr", "input", "meta", "link", "wbr", "source", "col", "area"}
+SKIPCLS = ("toc", "mw-editsection", "navbox", "reference", "gallery", "noprint", "printfooter", "mw-empty-elt", "wds-tabs", "portable-infobox", "quote")
+class P(html.parser.HTMLParser):
+    def __init__(s): super().__init__(); s.out = []; s.skip = 0; s.stack = []
+    def handle_startendtag(s, t, a):
+        if t == "br" and not s.skip: s.out.append("\n")
+    def handle_starttag(s, t, a):
+        cls = dict(a).get("class") or ""
+        sk = t in SKIP or any(c in cls for c in SKIPCLS)
+        if t in VOID:
+            if t == "br" and not s.skip: s.out.append("\n")
+            return
+        s.stack.append(sk)
+        if sk: s.skip += 1
+        if s.skip: return
+        if t in ("h2", "h3", "h4"): s.out.append("\n\n§ ")
+        elif t == "li": s.out.append("\n• ")
+        elif t in ("p", "div", "dd", "dl", "ul", "ol"): s.out.append("\n")
+    def handle_endtag(s, t):
+        if t in VOID or not s.stack: return
+        if s.stack.pop(): s.skip -= 1; return
+        if not s.skip and t in ("h2", "h3", "h4"): s.out.append("\n")
+    def handle_data(s, x):
+        if not s.skip: s.out.append(x)
+p = P(); p.feed(d["text"]["*"])
+t = re.sub(r"[ \t\r\f\v]+", " ", "".join(p.out))
+t = re.sub(r" *\n *", "\n", t); t = re.sub(r"\n{3,}", "\n\n", t).strip()
+if len(t) > 24000: t = t[:24000].rsplit("\n", 1)[0] + "\n…"
+title = d.get("title", "")
+print(json.dumps({"title": title, "url": base + "/wiki/" + urllib.parse.quote(title.replace(" ", "_")),
+                  "text": t, "source": site or base, "license": "CC BY-SA 3.0"}, ensure_ascii=False))
+' "$1" "$2"
+}
+
+# guides <appid> → links that open in the browser: their content stays on their sites
+cmd_guides() {
+    local id="$1" name w
+    [[ "$id" =~ ^[0-9]+$ ]] || { err "use: guides <appid>"; return 2; }
+    name="$(game_name "$id")"; w="$(wiki_get "$id")"
+    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" '
+        ($n | @uri) as $q |
+        [ {label:"EliteGuías", sub:"guide", url:("https://www.eliteguias.com/buscar.php?q=" + $q)},
+          {label:"EliteGuías", sub:"achievements", url:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20logros")},
+          {label:"Steam", sub:"community guides", url:("https://steamcommunity.com/app/" + $id + "/guides/")},
+          {label:"Steam", sub:"global achievements", url:("https://steamcommunity.com/stats/" + $id + "/achievements/")} ]
+        + (if ($w.base // "") != "" then [{label:"Wiki", sub:$w.name, url:$w.base}] else [] end)
+        | if $n == "" then map(select(.label != "EliteGuías")) else . end'
+}
+# gopen <url> — open a guide in the browser (https and steam:// only)
+cmd_gopen() {
+    [[ "${1:-}" =~ ^(https://|steam://) ]] || { err "use: gopen <https://…>"; return 2; }
+    have xdg-open || { err "xdg-open is missing"; return 4; }
+    env -u LD_LIBRARY_PATH -u LD_PRELOAD setsid -f xdg-open "$1" >/dev/null 2>&1 </dev/null
+    notify "Opened in your browser" "Leave the game (Alt+Tab) to read it."
+}
+
+# notes <appid> [set <text>] — the player's own notes for a game
+cmd_notes() {
+    local id="$1" f
+    [[ "$id" =~ ^[0-9]+$ ]] || { err "use: notes <appid> [set <text>]"; return 2; }
+    f="$NOTES_DIR/$id.md"
+    case "${2:-}" in
+        "") [[ -f "$f" ]] && cat "$f"; return 0 ;;
+        set) mkdir -p "$NOTES_DIR"; printf '%s' "${3:-}" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+        *) err "use: notes <appid> [set <text>]"; return 2 ;;
+    esac
+}
+
+# --- the panel itself ---
+panel_env() {   # Steam starts games without these sometimes, and its libraries break Qt
+    if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+        local s; for s in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/wayland-[0-9]; do
+            [[ -S "$s" ]] && { export WAYLAND_DISPLAY="${s##*/}"; break; }
+        done
+    fi
+}
+panel_launch() {   # show(1)|hidden(0)
+    [[ -f "$PANEL_QML" ]] || { err "panel not installed ($PANEL_QML): run install.sh"; return 4; }
+    have qs || { err "quickshell (qs) is needed for the panel"; return 4; }
+    panel_env; mkdir -p "$STATE_DIR/logs"
+    env -u LD_LIBRARY_PATH -u LD_PRELOAD CD_PANEL_SHOW="$1" CD_PANEL_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
+        setsid -f qs -n -p "$PANEL_QML" >"$STATE_DIR/logs/panel.log" 2>&1 </dev/null
+}
+panel_ipc() { panel_env; env -u LD_LIBRARY_PATH -u LD_PRELOAD qs ipc -p "$PANEL_QML" call panel "$1" >/dev/null 2>&1; }
+
+# the activation key, written into Hyprland's config between two marker lines
+panel_hypr_conf() {
+    local d="${GAMING_DECK_HYPR_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr}"
+    if [[ -f "$d/hyprland.lua" ]]; then echo "$d/hyprland.lua"; elif [[ -f "$d/hyprland.conf" ]]; then echo "$d/hyprland.conf"; fi
+}
+panel_key_mods() {   # "SUPER + SHIFT + G" → modmask · key
+    local m=0 k="" p
+    IFS='+' read -ra parts <<<"$1"
+    for p in "${parts[@]}"; do
+        p="$(tr -d ' ' <<<"$p")"
+        case "${p^^}" in
+            SUPER|WIN|MOD4) m=$(( m | 64 )) ;; SHIFT) m=$(( m | 1 )) ;; CTRL|CONTROL) m=$(( m | 4 )) ;; ALT|MOD1) m=$(( m | 8 )) ;;
+            *) k="$p" ;;
+        esac
+    done
+    echo "$m $k"
+}
+panel_key() {   # KEY | off
+    local key="$1" conf bin tmp m k other
+    conf="$(panel_hypr_conf)"; [[ -n "$conf" ]] || { err "Hyprland's config not found (~/.config/hypr/hyprland.lua or .conf)"; return 3; }
+    if [[ "$key" != off ]]; then
+        [[ "$key" =~ ^[A-Za-z0-9_]+([[:space:]]*\+[[:space:]]*[A-Za-z0-9_]+)*$ ]] || { err "not a key: $key (e.g. F6, SUPER + G)"; return 2; }
+        read -r m k <<<"$(panel_key_mods "$key")"
+        [[ -n "$k" ]] || { err "not a key: $key"; return 2; }
+        # a bind already on that key (not ours) wins: say which
+        if have hyprctl; then
+            other="$(hyprctl binds -j 2>/dev/null | jq -r --argjson m "$m" --arg k "$k" \
+                '.[] | select(.modmask == $m and (.key | ascii_downcase) == ($k | ascii_downcase))
+                 | select(((.arg // "") | test("gaming-deck panel")) or (.description // "") == "Gaming Deck: in-game panel" | not)
+                 | if (.description // "") != "" then .description else "\(.dispatcher) \(.arg // "")" end' 2>/dev/null | head -1)"
+            [[ -n "$other" ]] && { err "$key is already used in Hyprland ($other): choose another key"; return 3; }
+        fi
+    fi
+    bin="$(gaming_deck_bin)"
+    [[ -f "$conf.gaming-deck.bak" ]] || cp -p "$conf" "$conf.gaming-deck.bak"
+    tmp="$(mktemp)"
+    awk -v b="$PANEL_MARK_BEGIN" -v e="$PANEL_MARK_END" 'index($0, b) { skip = 1 } !skip { print } index($0, e) { skip = 0 }' "$conf" > "$tmp"
+    if [[ "$key" != off ]]; then
+        if [[ "$conf" == *.lua ]]; then
+            printf -- '-- %s\nhl.bind("%s", hl.dsp.exec_cmd("%s panel"), { description = "Gaming Deck: in-game panel" })\n-- %s\n' \
+                "$PANEL_MARK_BEGIN" "$key" "$bin" "$PANEL_MARK_END" >> "$tmp"
+        else
+            local mods=""; [[ "$key" == *+* ]] && mods="$(sed -E 's/[[:space:]]*\+[[:space:]]*[^+]*$//; s/[[:space:]]*\+[[:space:]]*/ /g' <<<"$key")"
+            printf '# %s\nbind = %s, %s, exec, %s panel\n# %s\n' "$PANEL_MARK_BEGIN" "$mods" "$k" "$bin" "$PANEL_MARK_END" >> "$tmp"
+        fi
+    fi
+    cat "$tmp" > "$conf"; rm -f "$tmp"
+    panel_setting_set key "$(jq -n --arg k "$key" '$k')"
+    if [[ "$key" == off ]]; then log "✔ In-game panel key removed from ${conf/#$HOME/\~}."
+    else log "✔ In-game panel on $key (${conf/#$HOME/\~}; Hyprland reloads it by itself)."; fi
+}
+
+# panel [toggle|show|hide|start|key <KEY|off>|toast on|off|status]
+cmd_panel() {
+    case "${1:-toggle}" in
+        toggle|show|hide)
+            local fn="${1:-toggle}"; fn="${fn/show/open}"; fn="${fn/hide/close}"
+            panel_ipc "$fn" && return 0
+            [[ "${1:-toggle}" == hide ]] && return 0
+            panel_launch 1 ;;
+        start) panel_ipc ping || panel_launch 0 ;;     # hidden: only watches for achievements
+        key) need "${2:-}" "use: panel key <KEY|off>"; panel_key "$2" ;;
+        toast)
+            case "${2:-}" in on) panel_setting_set toast true ;; off) panel_setting_set toast false ;; *) err "use: panel toast on|off"; return 2 ;; esac
+            log "✔ Achievement pop-ups: $2." ;;
+        status)
+            jq -nc --arg k "$(panel_setting key "")" --argjson t "$(panel_setting toast true)" \
+                --argjson inst "$([[ -f "$PANEL_QML" ]] && echo true || echo false)" \
+                --argjson run "$(panel_ipc ping && echo true || echo false)" \
+                '{key:(if $k == "" then null else $k end), toast:$t, installed:$inst, running:$run}' ;;
+        *) err "use: panel [toggle|show|hide|start|key <KEY|off>|toast on|off|status]"; return 2 ;;
+    esac
+}
+# run/session: the panel watches for achievements while the game runs
+panel_autostart() {
+    [[ "$(panel_setting toast true)" == true && -f "$PANEL_QML" ]] && have qs || return 0
+    cmd_panel start >/dev/null 2>&1 || true
 }
 
 # ------------------------------------------------------ 2.14 visual shaders ----
@@ -4207,6 +4638,7 @@ cmd_session() {
     [[ "$pid" =~ ^[0-9]+$ ]] && valid_game_key "$key" || { err "use: session <pid> <key>"; return 2; }
     [[ "$(profile_get "$key" | jq -r .overlay)" == true ]] && cmd_overlay "$pid"
     session_begin "$key" "$pid"
+    panel_autostart
     local rec t0; t0="$(date +%s)"; rec="$(session_record_start "$key" "$pid")"
     ( while [[ -d "${PROC_ROOT:-/proc}/$pid" ]]; do sleep 5; done
       session_end "$pid"; session_record_end "$key" "$rec" "$t0" ) </dev/null >/dev/null 2>&1 &
@@ -4571,6 +5003,13 @@ main() {
         gaudit)      if [[ "${1:-}" == fix ]]; then cmd_gaudit_fix "${2:-all}"; else cmd_gaudit; fi ;;
         fx)          cmd_fx "$@" ;;
         overlay)     cmd_overlay "$1" ;;
+        ingame)      cmd_ingame ;;
+        ach)         cmd_ach "${1:-}" ;;
+        wiki)        cmd_wiki "$@" ;;
+        guides)      cmd_guides "${1:-}" ;;
+        gopen)       cmd_gopen "${1:-}" ;;
+        notes)       cmd_notes "$@" ;;
+        panel)       cmd_panel "$@" ;;
         shaderclean) with_notify "Shader cache cleaned ✓" "Shader cache clean failed ✗" "$1" cmd_shaderclean "$1" "$2" ;;
         selfupdate)  with_notify "Gaming Deck updated ✓" "Gaming Deck update failed ✗" "gaming-deck" cmd_selfupdate ;;
         ""|-h|--help|help) usage ;;
