@@ -2166,7 +2166,8 @@ Gaming
   ovgames                       Installed Steam games with achievements progress and wiki (JSON, for OVERLAY)
   ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
   wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
-  guides <appid> / gopen <url>  Guide links (EliteGuías, Steam guides, wiki) · open one in the browser
+  guides <appid> / gopen <url>  Guide links (EliteGuías, Fextralife, Steam guides, wiki) · open one in the browser
+  web <https://…> [--back] | web close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
   notes <appid> [set <text>]    Your notes for a game
   health                        Gaming health: multilib, GPU driver, Vulkan, 32-bit libraries, with fix commands (JSON)
 EOF
@@ -2765,15 +2766,34 @@ print(json.dumps({"title": title, "url": base + "/wiki/" + urllib.parse.quote(ti
 ' "$1" "$2"
 }
 
-# guides <appid> → links that open in the browser: their content stays on their sites
+# Fextralife's wikis of souls-likes (checked by hand: their terms forbid automated
+# lookups, so nothing is probed; the site is only opened, never read)
+fextra_base() {   # appid → https://<x>.wiki.fextralife.com or nothing
+    local s=""
+    case "$1" in
+        1245620) s=eldenring ;;          2622380) s=eldenringnightreign ;;
+        374320)  s=darksouls3 ;;         570940)  s=darksouls ;;
+        335300|236430) s=darksouls2 ;;   814380)  s=sekiroshadowsdietwice ;;
+        1627720) s=liesofp ;;            1501750) s=lordsofthefallen ;;
+        1282100) s=remnant2 ;;           1888160) s=armoredcore6 ;;
+        1325200) s=nioh2 ;;              1110910) s=mortalshell ;;
+    esac
+    [[ -n "$s" ]] && echo "https://$s.wiki.fextralife.com"
+    return 0
+}
+
+# guides <appid> → guide sites: opened (in the overlay browser or yours), never copied.
+# "search" is the address to append a search text to.
 cmd_guides() {
-    local id="$1" name w
+    local id="$1" name w fx
     [[ "$id" =~ ^[0-9]+$ ]] || { err "use: guides <appid>"; return 2; }
-    name="$(game_name "$id")"; w="$(wiki_get "$id")"
-    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" '
+    name="$(game_name "$id")"; w="$(wiki_get "$id")"; fx="$(fextra_base "$id")"
+    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" --arg fx "$fx" '
         ($n | @uri) as $q |
-        [ {label:"EliteGuías", sub:"guide", url:("https://www.eliteguias.com/buscar.php?q=" + $q)},
-          {label:"EliteGuías", sub:"achievements", url:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20logros")},
+        [ {label:"EliteGuías", sub:"guide", url:("https://www.eliteguias.com/buscar.php?q=" + $q), search:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20")},
+          {label:"EliteGuías", sub:"achievements", url:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20logros")} ]
+        + (if $fx != "" then [{label:"Fextralife", sub:"wiki", url:$fx, search:($fx + "/Special:Search?search=")}] else [] end)
+        + [
           {label:"Steam", sub:"community guides", url:("https://steamcommunity.com/app/" + $id + "/guides/")},
           {label:"Steam", sub:"global achievements", url:("https://steamcommunity.com/stats/" + $id + "/achievements/")} ]
         + (if ($w.base // "") != "" then [{label:"Wiki", sub:$w.name, url:$w.base}] else [] end)
@@ -2786,6 +2806,31 @@ cmd_gopen() {
     env -u LD_LIBRARY_PATH -u LD_PRELOAD setsid -f xdg-open "$1" >/dev/null 2>&1 </dev/null
     if [[ "$(cmd_uilang)" == es ]]; then notify "Abierto en el navegador" "Sal del juego (Alt+Tab) para leerlo."
     else notify "Opened in your browser" "Leave the game (Alt+Tab) to read it."; fi
+}
+
+# web <https://…> [--back] | web close — a guide in a small browser over the game
+# (bin/gaming-deck-web: GTK + WebKit on the overlay layer); without it, your browser
+WEB_PID="${GAMING_DECK_WEB_PID:-${XDG_RUNTIME_DIR:-/tmp}/gaming-deck-web.pid}"
+web_helper() {
+    local h; h="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/gaming-deck-web"
+    [[ -x "$h" ]] || h="$HOME/.local/bin/gaming-deck-web"
+    [[ -x "$h" ]] && have python3 && python3 -c 'import gi; gi.require_version("WebKit2", "4.1"); gi.require_version("GtkLayerShell", "0.1")' 2>/dev/null \
+        && echo "$h"
+    return 0
+}
+web_running() { local p; p="$(cat "$WEB_PID" 2>/dev/null)"; [[ "$p" =~ ^[0-9]+$ ]] && [[ -d "${PROC_ROOT:-/proc}/$p" ]]; }
+cmd_web() {
+    if [[ "${1:-}" == close ]]; then
+        web_running && kill "$(cat "$WEB_PID")" 2>/dev/null
+        return 0
+    fi
+    [[ "${1:-}" =~ ^https:// ]] || { err "use: web <https://…> [--back] | web close"; return 2; }
+    local h; h="$(web_helper)"
+    [[ -n "$h" ]] || { cmd_gopen "$1"; return; }     # webkit2gtk-4.1 / gtk-layer-shell missing
+    panel_env; mkdir -p "$STATE_DIR/logs"
+    env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SteamAppId -u SteamGameId -u SteamOverlayGameId GDK_BACKEND=wayland \
+        CD_WEB_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
+        setsid -f "$h" "$1" ${2:+"$2"} --lang "$(cmd_uilang)" >"$STATE_DIR/logs/web.log" 2>&1 </dev/null
 }
 
 # notes <appid> [set <text>] — the player's own notes for a game
@@ -2812,7 +2857,8 @@ panel_launch() {   # show(1)|hidden(0)
     [[ -f "$PANEL_QML" ]] || { err "panel not installed ($PANEL_QML): run install.sh"; return 4; }
     have qs || { err "quickshell (qs) is needed for the panel"; return 4; }
     panel_env; mkdir -p "$STATE_DIR/logs"
-    env -u LD_LIBRARY_PATH -u LD_PRELOAD CD_PANEL_SHOW="$1" CD_PANEL_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
+    # without the game's SteamAppId: the panel (and what it runs) must not look like the game
+    env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SteamAppId -u SteamGameId -u SteamOverlayGameId CD_PANEL_SHOW="$1" CD_PANEL_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
         setsid -f qs -n -p "$PANEL_QML" >"$STATE_DIR/logs/panel.log" 2>&1 </dev/null
 }
 panel_ipc() { panel_env; env -u LD_LIBRARY_PATH -u LD_PRELOAD qs ipc -p "$PANEL_QML" call panel "$1" >/dev/null 2>&1; }
@@ -2873,6 +2919,8 @@ panel_key() {   # KEY | off
 cmd_panel() {
     case "${1:-toggle}" in
         toggle|show|hide)
+            # the key with a guide open over the game: close it, that's all
+            if [[ "${1:-toggle}" != show ]] && web_running; then cmd_web close; return 0; fi
             local fn="${1:-toggle}"; fn="${fn/show/open}"; fn="${fn/hide/close}"
             panel_ipc "$fn" && return 0
             [[ "${1:-toggle}" == hide ]] && return 0
@@ -4967,7 +5015,13 @@ cmd_uilang() {
     case "${1:-}" in
         en|es) mkdir -p "$STATE_DIR"; jq -n --arg l "$1" '{lang:$l}' > "$UI_SETTINGS"; echo "$1" ;;
         "") local l; l="$(jq -r '.lang // empty' "$UI_SETTINGS" 2>/dev/null)"
-            if [[ -z "$l" ]]; then case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in es*) l=es ;; *) l=en ;; esac; fi
+            # the first locale that names a language: games' wrappers often set LC_ALL=C
+            if [[ -z "$l" ]]; then
+                local v; l=en
+                for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+                    case "$v" in ""|C|C.*|POSIX) continue ;; es*) l=es ;; esac; break
+                done
+            fi
             echo "$l" ;;
         *) err "use: uilang [en|es]"; return 2 ;;
     esac
@@ -5033,6 +5087,7 @@ main() {
         wiki)        cmd_wiki "$@" ;;
         guides)      cmd_guides "${1:-}" ;;
         gopen)       cmd_gopen "${1:-}" ;;
+        web)         cmd_web "$@" ;;
         notes)       cmd_notes "$@" ;;
         panel)       cmd_panel "$@" ;;
         ovgames)     cmd_ovgames ;;

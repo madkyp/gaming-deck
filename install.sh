@@ -70,6 +70,7 @@ fi
 echo "== Installing Gaming Deck =="
 echo "→ backend   ~/.local/bin/gaming-deck"
 install -Dm755 "$SRC/bin/gaming-deck" "$HOME/.local/bin/gaming-deck"
+install -Dm755 "$SRC/bin/gaming-deck-web" "$HOME/.local/bin/gaming-deck-web"
 
 echo "→ icon      ~/.local/share/icons/hicolor/scalable/apps/gaming-deck.svg"
 install -Dm644 "$SRC/icons/gaming-deck.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/gaming-deck.svg"

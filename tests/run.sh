@@ -14,6 +14,7 @@ trap 'pkill -f -- "$T/fake/" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home"
 export GAMING_DECK_UMBRAL_RUNNING="$T/umbral-running.json"   # never the real one
 export GAMING_DECK_SCX_RULE_OLD="$T/no-old-rule"   # never this PC's /etc
+export GAMING_DECK_WEB_PID="$T/web.pid"   # never the real guide browser
 export GAMING_DECK_PANEL_QML="$T/no-panel.qml"   # never a real panel (install.sh puts one in the test $HOME)
 export GAMING_DECK_FX_EXTRA_PACKAGES="$T/fx-extra.json"; echo "[]" > "$T/fx-extra.json"   # community packs: none unless a test adds one
 unset XDG_DATA_HOME XDG_CACHE_HOME XDG_CONFIG_HOME GAMING_DECK_APPS_DIR INSTALL_ANY_APPS_DIR GITHUB_TOKEN
@@ -1429,6 +1430,19 @@ mkdir -p "$HOME/.cache/gaming-deck/fx"; echo '[]' > "$HOME/.cache/gaming-deck/fx
 eq "ovgames: each game with achievements, wiki and the anti-cheat its folder ships" \
    "$("$CD" ovgames | jq -c '.[] | [.appid, .ach.unlocked, .ach.total, (.wiki | has("base")), .anticheats]')" '["700",2,3,false,["Easy Anti-Cheat"]]'
 eq "no anti-cheat folder: none" "$(fn game_ac_files "$T/nowhere")" "[]"
+# Fextralife (souls-likes, a fixed list) with a search address; the deck's language without ui.json
+eq "Fextralife for a souls-like, with its search" "$(fn cmd_guides 1245620 | jq -r '.[] | select(.label == "Fextralife") | .search')" \
+   "https://eldenring.wiki.fextralife.com/Special:Search?search="
+eq "…none for other games" "$("$CD" guides 700 | jq '[.[] | select(.label == "Fextralife")] | length')" 0
+mv "$HOME/.local/share/gaming-deck/ui.json" "$T/ui.json.keep"
+eq "language: a game's LC_ALL=C doesn't hide the system's Spanish" "$(LC_ALL=C LC_MESSAGES= LANG=es_ES.UTF-8 "$CD" uilang)" es
+eq "…English otherwise" "$(LC_ALL=C LC_MESSAGES= LANG=en_GB.UTF-8 "$CD" uilang)" en
+mv "$T/ui.json.keep" "$HOME/.local/share/gaming-deck/ui.json"
+# the guide browser over the game
+"$CD" web "http://x.example" >/dev/null 2>&1; eq "web: https only" "$?" 2
+eq "web close with none open" "$("$CD" web close; echo $?)" 0
+bash -c 'source "$1"; web_helper() { :; }; cmd_web https://example.org/' _ "$CD" >/dev/null 2>&1
+eq "no WebKit / layer-shell: the guide goes to the browser instead" "$?" 0
 # notes
 "$CD" notes 700 set "$(printf 'línea 1\n[19:42] jefe')"
 eq "notes are kept as written" "$("$CD" notes 700)" "$(printf 'línea 1\n[19:42] jefe')"
@@ -1455,11 +1469,11 @@ rm -f "$HYD/hyprland.lua"*; printf 'bind = SUPER, I, exec, x\n' > "$HYD/hyprland
 has "hyprland.conf (no Lua): a classic bind line" "$(cat "$HYD/hyprland.conf")" "bind = SUPER SHIFT, P, exec, "
 unset GAMING_DECK_HYPR_DIR
 # run starts the panel hidden, to pop up achievements unlocked while playing
-stub qs 'case "$1" in ipc) exit 1 ;; esac; echo "qs $* show=$CD_PANEL_SHOW" >> "'"$T"'/qs.log"'
+stub qs 'case "$1" in ipc) exit 1 ;; esac; echo "qs $* show=$CD_PANEL_SHOW appid=${SteamAppId:-none}" >> "'"$T"'/qs.log"'
 touch "$T/panel.qml"; export GAMING_DECK_PANEL_QML="$T/panel.qml"
 rm -f "$T/qs.log"; SteamAppId=700 "$CD" run "$T/fake/ogame" >/dev/null
 for _ in $(seq 25); do [[ -s "$T/qs.log" ]] && break; sleep 0.2; done
-has "run starts the panel hidden" "$(cat "$T/qs.log")" "qs -n -p $T/panel.qml show=0"
+has "run starts the panel hidden" "$(cat "$T/qs.log")" "qs -n -p $T/panel.qml show=0 appid=none"  # (the game's SteamAppId stays out of it: it would pass for the game)
 rm -f "$T/qs.log"; "$CD" panel >/dev/null
 for _ in $(seq 25); do [[ -s "$T/qs.log" ]] && break; sleep 0.2; done
 has "the key opens it (shown) when it isn't running" "$(cat "$T/qs.log")" "show=1"

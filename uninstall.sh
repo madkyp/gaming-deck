@@ -5,6 +5,7 @@ set -euo pipefail
 # the in-game panel's key in Hyprland's config goes first (it's the deck that removes it)
 [[ -x "$HOME/.local/bin/gaming-deck" ]] && "$HOME/.local/bin/gaming-deck" panel key off >/dev/null 2>&1 || true
 rm -f "$HOME/.local/bin/gaming-deck"
+rm -f "$HOME/.local/bin/gaming-deck-web"
 rm -f "$HOME/.config/quickshell/gaming-deck/shell.qml"
 rm -f "$HOME/.config/quickshell/gaming-deck/es.js"
 rm -f "$HOME/.config/quickshell/gaming-deck-overlay/shell.qml"

@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+# gaming-deck-web — a small browser drawn on the Wayland overlay layer, above
+# the game, for guides (EliteGuías, Fextralife, Steam guides, a translated wiki
+# page): the sites are shown as they are, like in any browser, nothing is copied.
+# Like the in-game panel it never touches the game's process.
+#
+#   gaming-deck-web <https://…> [--back] [--lang es|en]
+#     --back   reopen the in-game panel when this closes
+# Esc or ✕ closes it; the panel's key (F6) closes it too (gaming-deck panel).
+import os
+import signal
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GtkLayerShell", "0.1")
+gi.require_version("WebKit2", "4.1")
+from gi.repository import Gdk, GLib, Gtk, GtkLayerShell, WebKit2  # noqa: E402
+
+ES = {"Open in browser": "Abrir en el navegador", "Close (Esc)": "Cerrar (Esc)",
+      "Back": "Atrás", "Forward": "Adelante", "Reload": "Recargar", "Loading…": "Cargando…"}
+
+CSS = b"""
+window { background-color: rgba(7, 8, 13, 0.98); border: 1px solid #1f2638; border-radius: 14px; }
+#bar { padding: 8px 10px; background-color: transparent; }
+#bar button { background: #11141f; color: #e2e8f0; border: 1px solid #1f2638; border-radius: 6px;
+              padding: 2px 10px; min-height: 26px; box-shadow: none; text-shadow: none; }
+#bar button:hover { background: #172036; border-color: #5eead4; }
+#title { color: #e2e8f0; font-weight: bold; }
+#host { color: #7c8aa0; font-family: monospace; font-size: 10px; }
+#close:hover { border-color: #fb7185; color: #fb7185; }
+"""
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    back = "--back" in args
+    lang = "en"
+    if "--lang" in args:
+        i = args.index("--lang")
+        lang = args[i + 1] if i + 1 < len(args) else "en"
+        del args[i:i + 2]
+    args = [a for a in args if a != "--back"]
+    if not args or not args[0].startswith("https://"):
+        print("use: gaming-deck-web <https://…> [--back] [--lang es|en]", file=sys.stderr)
+        return 2
+    url = args[0]
+    state = {"back": back}
+    tr = (lambda s: ES.get(s, s)) if lang == "es" else (lambda s: s)
+    deck = os.environ.get("CD_WEB_BIN") or os.path.expanduser("~/.local/bin/gaming-deck")
+
+    # one at a time: a new guide replaces the open one
+    run = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    pidf = os.environ.get("GAMING_DECK_WEB_PID") or os.path.join(run, "gaming-deck-web.pid")
+    try:
+        old = int(open(pidf).read().strip())
+        if old != os.getpid():
+            os.kill(old, signal.SIGTERM)
+    except (OSError, ValueError):
+        pass
+    open(pidf, "w").write(str(os.getpid()))
+
+    data = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "gaming-deck", "web")
+    cache = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "gaming-deck", "web")
+    os.makedirs(data, exist_ok=True)
+    manager = WebKit2.WebsiteDataManager(base_data_directory=data, base_cache_directory=cache)
+    ctx = WebKit2.WebContext.new_with_website_data_manager(manager)
+    # cookies kept: a site's cookie/consent choice is asked only once
+    ctx.get_cookie_manager().set_persistent_storage(os.path.join(data, "cookies.sqlite"),
+                                                    WebKit2.CookiePersistentStorage.SQLITE)
+    view = WebKit2.WebView.new_with_context(ctx)
+    s = view.get_settings()
+    s.set_enable_developer_extras(False)
+    s.set_enable_smooth_scrolling(True)
+
+    win = Gtk.Window()
+    settings = Gtk.Settings.get_default()
+    if settings:
+        settings.set_property("gtk-application-prefer-dark-theme", True)
+    prov = Gtk.CssProvider()
+    prov.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    GtkLayerShell.init_for_window(win)
+    GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+    GtkLayerShell.set_namespace(win, "gaming-deck-web")
+    for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM, GtkLayerShell.Edge.RIGHT):
+        GtkLayerShell.set_anchor(win, edge, True)
+        GtkLayerShell.set_margin(win, edge, 28)
+    GtkLayerShell.set_exclusive_zone(win, -1)
+    GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+    mon = Gdk.Display.get_default().get_monitor(0)
+    seat = Gdk.Display.get_default().get_default_seat()
+    try:
+        _, x, y = seat.get_pointer().get_position()[0:3]
+        mon = Gdk.Display.get_default().get_monitor_at_point(x, y) or mon
+    except Exception:
+        pass
+    width = min(1180, int(mon.get_geometry().width * 0.6)) if mon else 1100
+    win.set_size_request(width, -1)
+
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    bar.set_name("bar")
+
+    def button(label, tip, cb, name=None):
+        b = Gtk.Button(label=label)
+        b.set_tooltip_text(tip)
+        b.set_can_focus(False)
+        if name:
+            b.set_name(name)
+        b.connect("clicked", lambda *_: cb())
+        bar.pack_start(b, False, False, 0)
+        return b
+
+    def close():
+        Gtk.main_quit()
+
+    button("←", tr("Back"), lambda: view.go_back())
+    button("→", tr("Forward"), lambda: view.go_forward())
+    button("⟳", tr("Reload"), lambda: view.reload())
+    titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    title = Gtk.Label(label=tr("Loading…"), xalign=0)
+    title.set_name("title")
+    title.set_ellipsize(3)  # end
+    host = Gtk.Label(label="", xalign=0)
+    host.set_name("host")
+    host.set_ellipsize(3)
+    titles.pack_start(title, False, False, 0)
+    titles.pack_start(host, False, False, 0)
+    bar.pack_start(titles, True, True, 6)
+
+    def to_browser():
+        u = view.get_uri() or url
+        env = {k: v for k, v in os.environ.items() if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD")}
+        subprocess.Popen(["xdg-open", u], env=env, start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        close()
+
+    browser_btn = Gtk.Button(label=tr("Open in browser") + " ↗")
+    browser_btn.set_can_focus(False)
+    browser_btn.connect("clicked", lambda *_: to_browser())
+    close_btn = Gtk.Button(label="✕")
+    close_btn.set_name("close")
+    close_btn.set_tooltip_text(tr("Close (Esc)"))
+    close_btn.set_can_focus(False)
+    close_btn.connect("clicked", lambda *_: close())
+    bar.pack_end(close_btn, False, False, 0)
+    bar.pack_end(browser_btn, False, False, 0)
+
+    def on_title(*_):
+        title.set_text(view.get_title() or "")
+        u = view.get_uri() or ""
+        host.set_text(GLib.Uri.parse(u, GLib.UriFlags.NONE).get_host() if u.startswith("http") else u)
+    view.connect("notify::title", on_title)
+    view.connect("notify::uri", on_title)
+
+    # links that want a new window open here instead
+    def on_create(v, action):
+        req = action.get_request()
+        if req and req.get_uri():
+            v.load_uri(req.get_uri())
+        return None
+    view.connect("create", on_create)
+
+    def on_key(_w, ev):
+        if ev.keyval == Gdk.KEY_Escape:
+            close()
+            return True
+        if ev.state & Gdk.ModifierType.MOD1_MASK and ev.keyval == Gdk.KEY_Left:
+            view.go_back()
+            return True
+        return False
+    win.connect("key-press-event", on_key)
+    win.connect("destroy", lambda *_: Gtk.main_quit())
+    # SIGTERM: replaced by another guide, or closed by the panel's key: don't bring the panel back
+    def on_term(*_):
+        state["back"] = False
+        Gtk.main_quit()
+        return False
+    try:
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_term)
+    except (ImportError, ValueError):
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, on_term)
+
+    box.pack_start(bar, False, False, 0)
+    box.pack_start(view, True, True, 0)
+    win.add(box)
+    view.load_uri(url)
+    win.show_all()
+    view.grab_focus()
+    Gtk.main()
+
+    try:
+        if int(open(pidf).read().strip()) == os.getpid():
+            os.remove(pidf)
+    except (OSError, ValueError):
+        pass
+    if state["back"]:
+        env = {k: v for k, v in os.environ.items() if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD")}
+        subprocess.Popen([deck, "panel", "show"], env=env, start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
+if __name__ == "__main__":
+    rc = main()
+    sys.stdout.flush()
+    # straight out: WebKit's teardown at interpreter exit can abort (free(): corrupted…)
+    os._exit(rc or 0)

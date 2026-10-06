@@ -68,12 +68,14 @@ ShellRoot {
         "No results.": "Sin resultados.",
         "No Fandom wiki found for this game. Paste its address:": "No se encontró una wiki de Fandom para este juego. Pega su dirección:",
         "OPEN IN BROWSER": "ABRIR EN EL NAVEGADOR", "‹ RESULTS": "‹ RESULTADOS",
-        "Text: ": "Texto: ", "Opens in your browser (leave the game with Alt+Tab):": "Se abren en el navegador (sal del juego con Alt+Tab):",
+        "Text: ": "Texto: ",
         "guide": "guía", "community guides": "guías de la comunidad", "global achievements": "logros globales",
         "Your notes for this game (saved as you type)": "Tus notas de este juego (se guardan al escribir)",
         "+ TIMESTAMP": "+ MARCA DE TIEMPO", "session": "sesión",
         "Achievement unlocked": "Logro desbloqueado",
-        "close": "cerrar", "move": "moverse", "reveal": "ver", "tabs": "pestañas", "Space": "Espacio", "Show hidden": "Mostrar ocultos"
+        "close": "cerrar", "move": "moverse", "reveal": "ver", "tabs": "pestañas", "Space": "Espacio", "Show hidden": "Mostrar ocultos",
+        "Open over the game (Esc comes back here):": "Se abren encima del juego (Esc vuelve aquí):",
+        "Search": "Buscar", "on": "en", "wiki": "wiki"
     })
     function tr(s) { return lang === "es" && es[s] !== undefined ? es[s] : s; }
 
@@ -171,7 +173,16 @@ ShellRoot {
         searchBox.text = q;
         wikiSearch(q);
     }
-    function openUrl(u) { call(jOpen, ["gopen", u], null); }
+    // guides open over the game (gaming-deck-web); Esc there brings the panel back
+    function openUrl(u) { call(jOpen, ["web", u, "--back"], null); hide(); }
+    function browserUrl(u) { call(jOpen, ["gopen", u], null); }
+    // a wiki page through Google Translate's web proxy (host dots → dashes, dashes doubled)
+    function translated(u) {
+        var m = /^https:\/\/([^\/]+)(\/[^?#]*)?(\?[^#]*)?/.exec(u || "");
+        if (!m) return u;
+        var host = m[1].replace(/-/g, "--").replace(/\./g, "-") + ".translate.goog";
+        return "https://" + host + (m[2] || "/") + (m[3] ? m[3] + "&" : "?") + "_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es";
+    }
 
     // ---- sorted / filtered achievements ----
     property var shownItems: {
@@ -501,7 +512,7 @@ ShellRoot {
                     visible: root.tab === "guide" && !!root.game.appid
                     Column {
                         id: links; width: parent.width; spacing: 6
-                        Text { text: root.tr("Opens in your browser (leave the game with Alt+Tab):"); color: pal.dim; font.pixelSize: 11 }
+                        Text { text: root.tr("Open over the game (Esc comes back here):"); color: pal.dim; font.pixelSize: 11 }
                         Flow {
                             width: parent.width; spacing: 6
                             Repeater {
@@ -531,6 +542,23 @@ ShellRoot {
                                 onAccepted: root.wikiSearch(text)
                                 Keys.onEscapePressed: keys.forceActiveFocus()
                                 Text { anchors.verticalCenter: parent.verticalCenter; visible: !parent.text && !parent.activeFocus; text: root.tr("Search the wiki…") + "  (/)"; color: pal.dim; font.pixelSize: 14 }
+                            }
+                        }
+                        // the same search on the guide sites (EliteGuías, Fextralife), over the game
+                        Flow {
+                            width: parent.width; spacing: 6
+                            visible: searchBox.text.trim() !== ""
+                            Repeater {
+                                model: root.guides.filter(function (g) { return !!g.search; })
+                                Rectangle {
+                                    width: st.implicitWidth + 18; height: 26; radius: 5
+                                    color: sma.containsMouse ? pal.cardHi : "transparent"; border.color: pal.violet; border.width: 1
+                                    Text {
+                                        id: st; anchors.centerIn: parent; font.pixelSize: 12; color: pal.text; textFormat: Text.StyledText
+                                        text: root.tr("Search") + " <b>«" + searchBox.text.trim().replace(/</g, "&lt;") + "»</b> " + root.tr("on") + " <b>" + modelData.label + "</b> ↗"
+                                    }
+                                    MouseArea { id: sma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.search + encodeURIComponent(searchBox.text.trim())) }
+                                }
                             }
                         }
                         // no wiki: let the player give its address
@@ -584,7 +612,13 @@ ShellRoot {
                             Rectangle {
                                 width: ot.implicitWidth + 14; height: 24; radius: 5; color: pal.card
                                 Text { id: ot; anchors.centerIn: parent; text: root.tr("OPEN IN BROWSER") + " ↗"; color: pal.text; font.pixelSize: 11; font.bold: true }
-                                MouseArea { anchors.fill: parent; onClicked: if (root.page) root.openUrl(root.page.url) }
+                                MouseArea { anchors.fill: parent; onClicked: if (root.page) root.browserUrl(root.page.url) }
+                            }
+                            Rectangle {
+                                visible: root.lang === "es"
+                                width: trt.implicitWidth + 14; height: 24; radius: 5; color: pal.card; border.color: pal.accent; border.width: 1
+                                Text { id: trt; anchors.centerIn: parent; text: "TRADUCIR AL ESPAÑOL ↗"; color: pal.accent; font.pixelSize: 11; font.bold: true }
+                                MouseArea { anchors.fill: parent; onClicked: if (root.page) root.openUrl(root.translated(root.page.url)) }
                             }
                         }
                         Flickable {
