@@ -2689,9 +2689,11 @@ ShellRoot {
                                                 on: !win.gameBusy
                                                 onClicked: {
                                                     if (win.fxAnticheat && win.fxConfirm !== ck) { win.fxConfirm = ck; return; }
-                                                    var f = win.fxImportFile, pth = modelData.path;
-                                                    win.fxConfirm = ""; win.fxImportList = []; win.fxMsg = "";
-                                                    win.runGame(["fx", "import", win.selGame, f, pth], win.t("IMPORTING PRESET…"));
+                                                    // start it first: emptying the list destroys this very chip, and nothing after that runs
+                                                    var w = win, f = win.fxImportFile, pth = modelData.path;
+                                                    w.fxConfirm = ""; w.fxMsg = "";
+                                                    w.runGame(["fx", "import", w.selGame, f, pth], w.t("IMPORTING PRESET…"));
+                                                    Qt.callLater(function () { w.fxImportList = []; });
                                                 }
                                             }
                                         }
