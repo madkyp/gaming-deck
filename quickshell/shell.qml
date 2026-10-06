@@ -620,7 +620,8 @@ ShellRoot {
                 onStreamFinished: {
                     var l = []; try { l = JSON.parse(text); } catch (e) { }
                     if (l.length === 0) { win.fxMsg = "No ReShade preset in that file (it needs a Techniques= line)."; return; }
-                    if (l.length === 1) {
+                    // an anti-cheat game asks for a second click: keep the preset on screen to give it
+                    if (l.length === 1 && !win.fxAnticheat) {
                         win.fxMsg = "";
                         win.fxApply("file:" + win.fxImportFile, win.t("IMPORTING PRESET…"), ["fx", "import", win.selGame, win.fxImportFile]);
                     } else { win.fxImportList = l; win.fxMsg = l.length + " presets in this file: pick one"; }
@@ -2674,16 +2675,24 @@ ShellRoot {
                                     }
                                     Flow {
                                         Layout.fillWidth: true; spacing: 6
-                                        visible: win.fxImportList.length > 1
+                                        visible: win.fxImportList.length > 0
                                         Repeater {
                                             model: win.fxImportList
                                             delegate: Chip {
                                                 required property var modelData
-                                                label: modelData.path.replace(/^.*\//, "") + "  ·  " + modelData.effects + " fx"
-                                                tip: modelData.path; tint: pal.ok
+                                                // the list stays until the preset is really applied (anti-cheat: second click)
+                                                property string ck: "file:" + win.fxImportFile + "#" + modelData.path
+                                                label: win.fxConfirm === ck ? win.t("CONFIRM? (anti-cheat)") + "  ·  " + modelData.path.replace(/^.*\//, "")
+                                                                            : modelData.path.replace(/^.*\//, "") + "  ·  " + modelData.effects + " fx"
+                                                tip: modelData.path; tint: win.fxConfirm === ck ? pal.amber : pal.ok
+                                                active: win.fxConfirm === ck
                                                 on: !win.gameBusy
-                                                onClicked: { var f = win.fxImportFile, pth = modelData.path; win.fxImportList = [];
-                                                             win.fxApply("file:" + f, win.t("IMPORTING PRESET…"), ["fx", "import", win.selGame, f, pth]); }
+                                                onClicked: {
+                                                    if (win.fxAnticheat && win.fxConfirm !== ck) { win.fxConfirm = ck; return; }
+                                                    var f = win.fxImportFile, pth = modelData.path;
+                                                    win.fxConfirm = ""; win.fxImportList = []; win.fxMsg = "";
+                                                    win.runGame(["fx", "import", win.selGame, f, pth], win.t("IMPORTING PRESET…"));
+                                                }
                                             }
                                         }
                                     }

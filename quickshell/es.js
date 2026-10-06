@@ -164,6 +164,7 @@ var ES = {
     "CLONING…": "CLONANDO…",
     "CLOSE STEAM FIRST": "CIERRA STEAM ANTES",
     "CLOSING…": "CERRANDO…",
+    "CONFIRM? (anti-cheat)": "¿CONFIRMAR? (anti-cheat)",
     "CONFIRM?": "¿CONFIRMAR?",
     "COPIED ✓": "COPIADO ✓",
     "COPY": "COPIAR",
