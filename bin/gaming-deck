@@ -1511,6 +1511,49 @@ cmd_pdbindex() {
 }
 
 # gsuggest <appid> — what players who say the game works put in their launch options
+# what each suggested option does, for the hover text (the name before "="; _kind = fallback)
+SUG_WHAT="$(cat <<'EOF'
+{
+  "PROTON_FSR4_UPGRADE": "Replaces the game's FSR 3.1 with FSR 4 (much sharper upscaling). Needs a Radeon RX 9000 (RDNA 4) and a Proton that supports it (GE, CachyOS).",
+  "PROTON_FSR4_RDNA3_UPGRADE": "FSR 4 on a Radeon RX 7000 (RDNA 3) through a slower emulated path. Not needed on an RX 9000.",
+  "PROTON_ENABLE_WAYLAND": "Runs the game as a native Wayland window instead of through XWayland: can lower latency and fix scaling; some games, overlays or launchers don't like it.",
+  "PROTON_ENABLE_HDR": "Lets the game output HDR. Needs an HDR monitor and Wayland (PROTON_ENABLE_WAYLAND) or gamescope.",
+  "DXVK_HDR": "Lets DirectX games running through DXVK see HDR. Needs an HDR monitor and Wayland or gamescope.",
+  "ENABLE_HDR_WSI": "Turns on the Vulkan HDR layer (vk-hdr-layer) so HDR works on a Wayland desktop without gamescope.",
+  "SteamDeck": "Makes the game believe it runs on a Steam Deck: some games then pick Deck settings, a controller layout or skip their launcher.",
+  "MANGOHUD": "Shows the MangoHud overlay (FPS, frame time, temperatures) in the game.",
+  "PROTON_USE_NTSYNC": "Uses the kernel's NTSYNC driver for Windows-style synchronisation: smoother frame times in some games. Needs a kernel with /dev/ntsync.",
+  "PROTON_NO_ESYNC": "Turns esync off: a fallback for games that hang or crash with it.",
+  "PROTON_NO_FSYNC": "Turns fsync off: a fallback for games that hang or crash with it.",
+  "PROTON_USE_SDL": "Proton reads controllers through SDL instead of its own code: fixes some controllers that aren't detected or are mapped wrong.",
+  "PROTON_USE_WINED3D": "Draws DirectX through OpenGL (WineD3D) instead of Vulkan: a fallback for old games with graphics glitches; usually slower.",
+  "STAGING_SHARED_MEMORY": "A Wine-staging memory option that lowers CPU overhead in some games.",
+  "STAGING_WRITE_COPY": "A Wine-staging memory option some games or anti-cheats need to start.",
+  "VKD3D_CONFIG": "Options for VKD3D-Proton (DirectX 12 → Vulkan), e.g. dxr to turn ray tracing on.",
+  "VKD3D_FEATURE_LEVEL": "Which DirectX 12 feature level is reported to the game: for games that refuse to start without a newer one.",
+  "VKD3D_SHADER_MODEL": "Which DirectX 12 shader model is reported to the game: for games that check for a newer one.",
+  "WINE_CPU_TOPOLOGY": "How many CPU cores the game sees: fixes games that stutter or crash with many cores.",
+  "RADV_PERFTEST": "Experimental options of the AMD Vulkan driver (RADV): can help a game or make it worse.",
+  "__GL_SHADER_DISK_CACHE_SIZE": "Size of the NVIDIA shader cache: a bigger one means less stutter from recompiling shaders.",
+  "DXVK_ASYNC": "Compiles shaders in the background (older DXVK forks only): less stutter, possible brief glitches.",
+  "gamemoderun": "GameMode: raises CPU priority and switches to the performance governor while you play.",
+  "mangohud": "Shows the MangoHud overlay (FPS, frame time, temperatures) in the game.",
+  "game-performance": "CachyOS script: switches the power profile to performance while the game runs.",
+  "gamescope": "Valve's compositor around the game: fixed resolution, upscaling, FPS limit or HDR; adds a little latency.",
+  "taskset": "Pins the game to some CPU cores only: for games that run badly on many cores.",
+  "env": "Only sets variables before the game starts (the variables are the useful part).",
+  "er-patcher": "Elden Ring tool (installed separately) that removes the 60 FPS cap and adds ultrawide and camera options.",
+  "python": "Starts a Python script before the game (e.g. a game patcher): only useful if you have that script.",
+  "-dx12": "Makes the game use DirectX 12.",
+  "-dx11": "Makes the game use DirectX 11: sometimes more stable or faster under Proton.",
+  "-devmode": "The game's developer mode (in Kingdom Come: the developer console).",
+  "-skipintro": "Skips the intro videos.",
+  "_env": "An environment variable for Proton, the driver or the game.",
+  "_arg": "A launch option passed to the game itself: what it does depends on the game.",
+  "_wrapper": "A program that starts the game (a launcher, tool or script)."
+}
+EOF
+)"
 cmd_gsuggest() {
     local id="$1" vendor since
     [[ "$id" =~ ^[0-9]+$ ]] || { err "use: gsuggest <appid>"; return 2; }
@@ -1520,7 +1563,7 @@ cmd_gsuggest() {
     local gname; gname="$(gpu_name)"
     gen="$(jq -Rr "$JQ_GPU_GEN"' gpu_gen' <<<"$gname")"
     cores="$(nproc 2>/dev/null || echo 0)"; res="$(screen_res)"; local hz; hz="$(screen_hz)"
-    grep -F "[\"$id\"," "$PDB_INDEX" | jq -sc --arg v "$vendor" --argjson since "$since" \
+    grep -F "[\"$id\"," "$PDB_INDEX" | jq -sc --arg v "$vendor" --argjson since "$since" --argjson what "$SUG_WHAT" \
         --arg gen "$gen" --arg gname "$gname" --argjson cores "${cores:-0}" --arg res "$res" --arg hz "$hz" '
         # hardware-dependent values are grouped and rewritten for this PC
         def adapt:
@@ -1609,7 +1652,7 @@ cmd_gsuggest() {
         | {index:true, vendor:$v, gpuGen:$gen, gpuName:$gname, similarLabel:($gen | gen_label),
            cores:$cores, screen:$res, window:$w.window,
            reports:$n, vendorReports:$nv, similarReports:(if $ns >= 5 then $ns else 0 end),
-           suggestions:.[:16]}'
+           suggestions:(.[:16] | map(. + {what:($what[.token | split("=")[0]] // $what["_" + .kind] // "")}))}'
 }
 
 # --- shader caches -----------------------------------------------------------------

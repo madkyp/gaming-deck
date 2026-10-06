@@ -346,7 +346,9 @@ ShellRoot {
                     + win.t(" who say it works use it (") + x.n + win.t(" reports)");
             if (x.kind === "env" && x.unset !== undefined) t += "; " + x.unset + win.t("% leave it at the default");
             if (x.adapted) t += win.t("; value adapted to this PC");
-            return t + (applied ? win.t(". Already in the profile.") : win.t(". Click to add, then SAVE."));
+            t += applied ? win.t(". Already in the profile.") : win.t(". Click to add, then SAVE.");
+            // what the option does first, then how many players use it
+            return x.what ? win.t(x.what) + "\n\n" + t : t;
         }
         // add a suggestion to the editor (saved with SAVE, never automatically)
         function applySug(x) {

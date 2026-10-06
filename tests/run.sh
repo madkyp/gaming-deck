@@ -304,6 +304,8 @@ eq "only working, recent reports (12 of 16)" "$(jq -r .reports <<<"$S")" 12
 eq "-vulkan: share / NVIDIA share / fits" "$(sug -vulkan)" "91/100/true"
 eq "+cvar value kept as one option" "$(sug '+fps_max 120')" "75/100/true"
 eq "env var suggested" "$(sug PROTON_ENABLE_WAYLAND=1)" "16/11/true"
+has "each option says what it does" "$(jq -r '.suggestions[] | select(.token == "PROTON_ENABLE_WAYLAND=1") | .what' <<<"$S")" "native Wayland window"
+eq "…an unknown launch option gets the generic text" "$(jq -r '.suggestions[] | select(.token == "-vulkan") | .what' <<<"$S")" "A launch option passed to the game itself: what it does depends on the game."
 eq "AMD-only variable hidden on NVIDIA (0 % of NVIDIA players)" "$(sug RADV_PERFTEST=gpl,nggc)" none
 eq "…and shown on AMD, quotes stripped" "$(GAMING_DECK_GPU_VENDOR=amd GAMING_DECK_GPU_NAME="AMD Radeon RX 7900 XTX" "$CD" gsuggest 100 | jq -r '.suggestions[] | select(.token == "RADV_PERFTEST=gpl,nggc") | .foryou')" true
 # shellcheck disable=SC2088  # a literal "~/lsfg" token, as players write it
