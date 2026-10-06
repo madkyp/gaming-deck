@@ -239,6 +239,19 @@ ShellRoot {
             fxGames = []; fxPresets = []; fxGameId = ""; fxMsg = "";
             fxSearchProc.command = [scriptPath, "fx", "search", q]; fxSearchProc.running = true;
         }
+        // preset list order: "new" (as SweetFX DB lists them), "downloads", "best" (downloads weighed by the review)
+        property string fxSort: "new"
+        function fxSorted(list, reviews, how) {
+            if (how === "new") return list;
+            var w = { light: 1.3, moderate: 1.0, strong: 0.6, empty: 0, old: 0 };
+            function score(p) {
+                if (p.shader && p.shader !== "ReShade") return -1;
+                var r = reviews[p.id], d = p.downloads || 0;
+                if (how === "downloads") return d;
+                return d * (r ? (w[r.verdict] !== undefined ? w[r.verdict] : 0.6) : 0.8);
+            }
+            return list.slice().sort(function (a, b) { return score(b) - score(a) || (b.downloads || 0) - (a.downloads || 0); });
+        }
         function fxLoadPresets(id) {
             fxGameId = id; fxPresets = []; fxReviews = {}; fxMsg = "Loading presets…";
             fxPresetsProc.command = [scriptPath, "fx", "presets", id]; fxPresetsProc.running = true;
@@ -643,7 +656,7 @@ ShellRoot {
             stdout: StdioCollector {
                 onStreamFinished: {
                     try { win.fxPresets = JSON.parse(text); } catch (e) { win.fxPresets = []; }
-                    win.fxMsg = win.fxPresets.length === 0 ? "This game has no presets yet." : win.fxPresets.length + " presets — newest first";
+                    win.fxMsg = win.fxPresets.length === 0 ? "This game has no presets yet." : win.fxPresets.length + " presets";
                     Qt.callLater(win.fxToTop);
                     if (win.fxPresets.length) { fxReviewsProc.command = [win.scriptPath, "fx", "reviews", win.fxGameId]; fxReviewsProc.running = true; }
                 }
@@ -885,6 +898,34 @@ ShellRoot {
         }
 
         // small boxed button (row actions)
+        // takes the shaders off the selected game: red, with a bin, and a second click to confirm
+        component FxRemoveBtn: Rectangle {
+            id: frb
+            property bool armed: false
+            implicitWidth: frbRow.implicitWidth + 22; implicitHeight: 28
+            radius: 6; color: armed ? Qt.rgba(0.98, 0.44, 0.52, 0.18) : "transparent"
+            border.width: 1; border.color: pal.bad
+            opacity: win.gameBusy ? 0.4 : 1.0
+            Timer { id: frbDisarm; interval: 4000; onTriggered: frb.armed = false }
+            RowLayout {
+                id: frbRow; anchors.centerIn: parent; spacing: 6
+                Text { text: "\uf1f8"; color: pal.bad; font.family: win.mono; font.pixelSize: 12 }
+                Text {
+                    text: frb.armed ? win.t("SURE? CLICK AGAIN") : win.t("REMOVE SHADERS")
+                    color: pal.bad; font.family: win.mono; font.pixelSize: 8; font.bold: true; font.letterSpacing: 1
+                }
+            }
+            MouseArea {
+                id: frbMa; anchors.fill: parent; enabled: !win.gameBusy; hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (!frb.armed) { frb.armed = true; frbDisarm.restart(); return; }
+                    frb.armed = false;
+                    win.runGame(["fx", "set", win.selGame, "off"], win.t("TURNING OFF…"));
+                }
+            }
+            Tip { visible: frbMa.containsMouse && !frb.armed; text: win.t("Remove the shaders from this game") }
+        }
         component MiniBtn: Rectangle {
             id: mb
             property string label
@@ -2080,11 +2121,7 @@ ShellRoot {
                                             visible: win.fxStepsDone === 5 && win.fxCur.source === "sfx"
                                             label: "PRESET ↗"; onClicked: Qt.openUrlExternally(win.fxCur.url)
                                         }
-                                        Chip {
-                                            visible: win.fxStepsDone === 5; label: "OFF"; on: !win.gameBusy
-                                            tip: win.t("Remove the shaders from this game")
-                                            onClicked: win.runGame(["fx", "set", win.selGame, "off"], win.t("TURNING OFF…"))
-                                        }
+                                        FxRemoveBtn { visible: win.fxStepsDone === 5 }
                                         Chip { label: win.fxGuideOpen ? win.t("GUIDE ▴") : win.t("GUIDE ▾"); tip: win.t("Every step, with what each one does"); onClicked: win.fxGuideOpen = !win.fxGuideOpen }
                                     }
                                     // what is installed: where the preset came from, each effect and its shader pack
@@ -2511,12 +2548,7 @@ ShellRoot {
                                             visible: win.fxActive && win.fxCur.source === "sfx"
                                             label: "PRESET ↗"; onClicked: Qt.openUrlExternally(win.fxCur.url)
                                         }
-                                        MiniBtn {
-                                            visible: win.fxActive
-                                            width: Math.max(60, implicitWidth); height: 28; primary: false; label: "OFF"
-                                            on: !win.gameBusy
-                                            onClicked: win.runGame(["fx", "set", win.selGame, "off"], win.t("TURNING OFF…"))
-                                        }
+                                        FxRemoveBtn { visible: win.fxActive }
                                     }
                                     Repeater {
                                         model: win.fxActive ? (win.fxCur.skipped || []) : []
@@ -2681,16 +2713,31 @@ ShellRoot {
                                             }
                                         }
                                     }
-                                    Text {
-                                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
                                         visible: win.fxMsg !== ""
-                                        text: win.t(win.fxMsg); color: pal.dim; font.family: win.mono; font.pixelSize: 10
+                                        Text {
+                                            Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                            text: win.t(win.fxMsg); color: pal.dim; font.family: win.mono; font.pixelSize: 10
+                                        }
+                                        Repeater {
+                                            model: win.fxPresets.length > 1
+                                                   ? [["new", win.t("NEWEST"), win.t("As SweetFX DB lists them: the newest first")],
+                                                      ["downloads", win.t("MOST DOWNLOADED"), win.t("The most downloaded first")],
+                                                      ["best", win.t("BEST"), win.t("Downloads weighed by the review: light presets go up, strong ones down, empty or old-format ones to the end")]]
+                                                   : []
+                                            delegate: Chip {
+                                                required property var modelData
+                                                label: modelData[1]; tip: modelData[2]; active: win.fxSort === modelData[0]
+                                                onClicked: { win.fxSort = modelData[0]; Qt.callLater(win.fxToTop); }
+                                            }
+                                        }
                                     }
                                     ListView {
                                         id: fxList
                                         Layout.fillWidth: true; Layout.fillHeight: true
                                         clip: true; spacing: 3
-                                        model: win.fxPresets
+                                        model: win.fxSorted(win.fxPresets, win.fxReviews, win.fxSort)
                                         ScrollBar.vertical: ScrollBar {}
                                         delegate: Rectangle {
                                             required property var modelData
