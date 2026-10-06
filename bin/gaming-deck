@@ -2622,6 +2622,9 @@ fx_route() {
 
 # fx status [key] → install state, GPU, and (with a key) route, online risk, current preset
 # which route suits a game, and why: {pick: reshade|vkbasalt|none, reasons:[…]}
+# Anti-cheat games whose anti-cheat accepts plain ReShade (the build without add-ons, which is what
+# "fx reshade install" gets): Steam app id → why we know. Only games where it is established.
+FX_RESHADE_AC_OK='{"1245620":"Elden Ring: popular ReShade presets (e.g. Nexus \"Unreal ReShade\") are played online with Easy Anti-Cheat on"}'
 fx_advice() {   # key exes-json online-json report-json
     local key="$1" exes="$2" online="$3" cur="$4" native=""
     if [[ "$(jq length <<<"$exes")" == 0 && "$key" == steam:* ]]; then
@@ -2635,14 +2638,20 @@ fx_advice() {   # key exes-json online-json report-json
             done < <(find "$dir" -maxdepth 3 -type f -size +500k \( -perm -u+x -o -name '*.so*' \) 2>/dev/null | head -40)
         fi
     fi
-    jq -nc --argjson exes "$exes" --argjson online "${online:-null}" --argjson cur "${cur:-null}" --arg native "$native" '
+    jq -nc --argjson exes "$exes" --argjson online "${online:-null}" --argjson cur "${cur:-null}" --arg native "$native" \
+        --argjson acok "$FX_RESHADE_AC_OK" --arg id "${key#steam:}" '
         ($exes[0].api // "unknown") as $api
         | (($online // {}).level // "none") as $risk
+        | $acok[$id] as $acwhy
         | ([($cur // {}).skipped[]? | select(.why | test("depth"))] | length) as $depth
         | if $native == "vulkan" then {pick:"vkbasalt", reasons:["Native Linux build that draws with Vulkan: vkBasalt is the only one that can hook it (ReShade needs a Windows game)."]}
           elif $native == "opengl" then {pick:"none", reasons:["Native Linux build that draws with OpenGL: neither vkBasalt (Vulkan only) nor ReShade (Windows only) can hook it."]}
           elif $api == "gdi" then {pick:"none", reasons:["2D game drawn with GDI (RPG Maker style): no shader tool can hook it."]}
           elif $api == "vulkan" then {pick:"vkbasalt", reasons:["The game renders with Vulkan: ReShade'"'"'s DLL can'"'"'t hook it here, vkBasalt can."]}
+          elif $risk == "anticheat" and $acwhy != null then {pick:"reshade", reasons:[
+                "Anti-cheat (\(($online.anticheats // []) | join(", "))) that accepts plain ReShade: \($acwhy).",
+                "Use Gaming Deck'"'"'s ReShade (no add-ons build) and IMPORT the preset; skip the DLL some presets ship.",
+                "vkBasalt is not recommended here: with converted presets this game can stay on a white screen."]}
           elif $risk == "anticheat" then {pick:"vkbasalt", reasons:[
                 "Online game with anti-cheat (\(($online.anticheats // []) | join(", "))): neither is safe there.",
                 "If you use one anyway, vkBasalt is the lighter touch: a Vulkan layer, no DLL or files in the game folder."]}

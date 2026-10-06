@@ -1124,6 +1124,7 @@ eq "DirectX single-player → ReShade" "$(ADV steam:1 '[{"api":"dxgi"}]' '{"leve
 eq "Vulkan → vkBasalt" "$(ADV steam:1 '[{"api":"vulkan"}]' '{"level":"none"}' null | jq -r .pick)" vkbasalt
 eq "GDI → none" "$(ADV steam:1 '[{"api":"gdi"}]' null null | jq -r .pick)" none
 eq "anti-cheat → vkBasalt, saying neither is safe" "$(ADV steam:1 '[{"api":"dxgi"}]' '{"level":"anticheat","anticheats":["EAC"]}' null | jq -r '.pick + " | " + .reasons[0]')" "vkbasalt | Online game with anti-cheat (EAC): neither is safe there."
+eq "anti-cheat that accepts ReShade (Elden Ring) → ReShade" "$(ADV steam:1245620 '[{"api":"dxgi"}]' '{"level":"anticheat","anticheats":["EAC"]}' null | jq -r .pick)" reshade
 has "a preset with depth effects is a reason for ReShade" "$(ADV steam:1 '[{"api":"dxgi"}]' '{"level":"none"}' '{"skipped":[{"why":"uses the depth buffer"}]}' | jq -r '.reasons | join(" ")')" "1 depth effect(s)"
 NG="$ST/steamapps/common/NativeGame"; mkdir -p "$NG"; man 7000 "Native Game" NativeGame 1
 { printf '\x7fELF'; head -c 600000 /dev/zero; printf 'libvulkan.so.1'; } > "$NG/game.x86_64"; chmod +x "$NG/game.x86_64"
