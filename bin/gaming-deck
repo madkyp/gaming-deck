@@ -2167,7 +2167,7 @@ Gaming
   ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
   wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
   guides <appid> / gopen <url>  Guide links (EliteGuías, Fextralife, Steam guides, wiki) · open one in the browser
-  web <https://…> [--back] | web close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
+  web <https://…> [--back] [--fallback <https://…>] | web close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
   notes <appid> [set <text>]    Your notes for a game
   health                        Gaming health: multilib, GPU driver, Vulkan, 32-bit libraries, with fix commands (JSON)
 EOF
@@ -2782,16 +2782,43 @@ fextra_base() {   # appid → https://<x>.wiki.fextralife.com or nothing
     return 0
 }
 
+# EliteGuías' own addresses for a game (worked out from its name, nothing is
+# fetched): guide /guias/<l>/<initials>/<name>.php, achievements /trucos/<l>/<name>.php
+# "Kingdom Come: Deliverance II" → kingdom-come-deliverance-2 · kcd2
+eg_slug() {   # name → "<slug> <initials>"
+    local n w slug="" ini="" words last
+    n="${1//[™®©]/}"     # before iconv, which spells them out ("(TM)")
+    n="$(iconv -f utf-8 -t ascii//TRANSLIT <<<"$n" 2>/dev/null || echo "$n")"
+    n="$(tr '[:upper:]' '[:lower:]' <<<"$n" | sed -E "s/[^a-z0-9&' ]+/ /g; s/['™®©]//g; s/&/ /g")"
+    read -ra words <<<"$n"
+    last=$(( ${#words[@]} - 1 ))
+    if (( last > 0 )); then
+        case "${words[$last]}" in ii) words[last]=2 ;; iii) words[last]=3 ;; iv) words[last]=4 ;; esac
+    fi
+    for w in "${words[@]}"; do
+        slug+="${slug:+-}$w"
+        if [[ "$w" =~ ^[0-9]+$ ]]; then ini+="$w"; else ini+="${w:0:1}"; fi
+    done
+    [[ -n "$slug" ]] && echo "$slug $ini"
+    return 0
+}
+
 # guides <appid> → guide sites: opened (in the overlay browser or yours), never copied.
 # "search" is the address to append a search text to.
 cmd_guides() {
     local id="$1" name w fx
     [[ "$id" =~ ^[0-9]+$ ]] || { err "use: guides <appid>"; return 2; }
     name="$(game_name "$id")"; w="$(wiki_get "$id")"; fx="$(fextra_base "$id")"
-    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" --arg fx "$fx" '
-        ($n | @uri) as $q |
-        [ {label:"EliteGuías", sub:"guide", url:("https://www.eliteguias.com/buscar.php?q=" + $q), search:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20")},
-          {label:"EliteGuías", sub:"achievements", url:("https://www.eliteguias.com/buscar.php?q=" + $q + "%20logros")} ]
+    local eg="" egt="" slug ini
+    read -r slug ini <<<"$(eg_slug "$name")"
+    if [[ -n "$slug" ]]; then
+        eg="https://www.eliteguias.com/guias/${slug:0:1}/$ini/$slug.php"; egt="https://www.eliteguias.com/trucos/${slug:0:1}/$slug.php"
+    fi
+    jq -nc --arg id "$id" --arg n "$name" --argjson w "$w" --arg fx "$fx" --arg eg "$eg" --arg egt "$egt" '
+        ($n | @uri) as $q | ("https://www.eliteguias.com/buscar.php?q=" + $q) as $egq |
+        # straight to the guide / achievements page of the game; its search when there is none
+        [ {label:"EliteGuías", sub:"guide", url:(if $eg != "" then $eg else $egq end), fallback:$egq, search:($egq + "%20")},
+          {label:"EliteGuías", sub:"achievements", url:(if $egt != "" then $egt else $egq + "%20logros" end), fallback:($egq + "%20logros")} ]
         + (if $fx != "" then [{label:"Fextralife", sub:"wiki", url:$fx, search:($fx + "/Special:Search?search=")}] else [] end)
         + [
           {label:"Steam", sub:"community guides", url:("https://steamcommunity.com/app/" + $id + "/guides/")},
@@ -2824,13 +2851,20 @@ cmd_web() {
         web_running && kill "$(cat "$WEB_PID")" 2>/dev/null
         return 0
     fi
-    [[ "${1:-}" =~ ^https:// ]] || { err "use: web <https://…> [--back] | web close"; return 2; }
+    [[ "${1:-}" =~ ^https:// ]] || { err "use: web <https://…> [--back] [--fallback <https://…>] | web close"; return 2; }
+    local url="$1" back="" fb=""; shift
+    while (( $# )); do
+        case "$1" in
+            --back) back=--back ;;
+            --fallback) [[ "${2:-}" =~ ^https:// ]] && fb="$2"; shift ;;
+        esac; shift
+    done
     local h; h="$(web_helper)"
-    [[ -n "$h" ]] || { cmd_gopen "$1"; return; }     # webkit2gtk-4.1 / gtk-layer-shell missing
+    [[ -n "$h" ]] || { cmd_gopen "$url"; return; }     # webkit2gtk-4.1 / gtk-layer-shell missing
     panel_env; mkdir -p "$STATE_DIR/logs"
     env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SteamAppId -u SteamGameId -u SteamOverlayGameId GDK_BACKEND=wayland \
         CD_WEB_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
-        setsid -f "$h" "$1" ${2:+"$2"} --lang "$(cmd_uilang)" >"$STATE_DIR/logs/web.log" 2>&1 </dev/null
+        setsid -f "$h" "$url" $back ${fb:+--fallback "$fb"} --lang "$(cmd_uilang)" >"$STATE_DIR/logs/web.log" 2>&1 </dev/null
 }
 
 # notes <appid> [set <text>] — the player's own notes for a game

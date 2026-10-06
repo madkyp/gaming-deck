@@ -4,8 +4,9 @@
 # page): the sites are shown as they are, like in any browser, nothing is copied.
 # Like the in-game panel it never touches the game's process.
 #
-#   gaming-deck-web <https://…> [--back] [--lang es|en]
-#     --back   reopen the in-game panel when this closes
+#   gaming-deck-web <https://…> [--back] [--fallback <https://…>] [--lang es|en]
+#     --back       reopen the in-game panel when this closes
+#     --fallback   load this instead when the first page isn't there (HTTP ≥ 400)
 # Esc or ✕ closes it; the panel's key (F6) closes it too (gaming-deck panel).
 import os
 import signal
@@ -38,6 +39,11 @@ def main():
     args = [a for a in sys.argv[1:]]
     back = "--back" in args
     lang = "en"
+    fallback = ""
+    if "--fallback" in args:
+        i = args.index("--fallback")
+        fallback = args[i + 1] if i + 1 < len(args) else ""
+        del args[i:i + 2]
     if "--lang" in args:
         i = args.index("--lang")
         lang = args[i + 1] if i + 1 < len(args) else "en"
@@ -47,7 +53,7 @@ def main():
         print("use: gaming-deck-web <https://…> [--back] [--lang es|en]", file=sys.stderr)
         return 2
     url = args[0]
-    state = {"back": back}
+    state = {"back": back, "fallback": fallback if fallback.startswith("https://") else ""}
     tr = (lambda s: ES.get(s, s)) if lang == "es" else (lambda s: s)
     deck = os.environ.get("CD_WEB_BIN") or os.path.expanduser("~/.local/bin/gaming-deck")
 
@@ -160,6 +166,29 @@ def main():
         host.set_text(GLib.Uri.parse(u, GLib.UriFlags.NONE).get_host() if u.startswith("http") else u)
     view.connect("notify::title", on_title)
     view.connect("notify::uri", on_title)
+
+    # a page that isn't there (a game without a guide on that site): its search instead
+    def use_fallback(v):
+        fb, state["fallback"] = state["fallback"], ""
+        v.load_uri(fb)
+
+    def on_load(v, event):
+        if event != WebKit2.LoadEvent.FINISHED or not state["fallback"]:
+            return
+        res = v.get_main_resource()
+        resp = res.get_response() if res else None
+        if resp and resp.get_status_code() >= 400:
+            use_fallback(v)
+        else:
+            state["fallback"] = ""      # only the first page counts
+    view.connect("load-changed", on_load)
+
+    def on_failed(v, _event, _uri, _err):
+        if state["fallback"]:
+            use_fallback(v)
+            return True
+        return False
+    view.connect("load-failed", on_failed)
 
     # links that want a new window open here instead
     def on_create(v, action):

@@ -174,7 +174,7 @@ ShellRoot {
         wikiSearch(q);
     }
     // guides open over the game (gaming-deck-web); Esc there brings the panel back
-    function openUrl(u) { call(jOpen, ["web", u, "--back"], null); hide(); }
+    function openUrl(u, fallback) { call(jOpen, ["web", u, "--back"].concat(fallback ? ["--fallback", fallback] : []), null); hide(); }
     function browserUrl(u) { call(jOpen, ["gopen", u], null); }
     // a wiki page through Google Translate's web proxy (host dots → dashes, dashes doubled)
     function translated(u) {
@@ -530,7 +530,7 @@ ShellRoot {
                                         textFormat: Text.StyledText; color: pal.text
                                         text: "<b>" + modelData.label + "</b> <font color='#7c8aa0'>" + root.tr(modelData.sub) + " ↗</font>"
                                     }
-                                    MouseArea { id: lma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.url) }
+                                    MouseArea { id: lma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.url, modelData.fallback) }
                                 }
                             }
                         }

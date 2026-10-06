@@ -1412,7 +1412,11 @@ eq "a wiki set by hand" "$("$CD" wiki 700 | jq -r .base)" "https://kingdom-come-
 G="$("$CD" guides 700)"
 eq "guide links: EliteGuías (game, achievements), Steam, the wiki" "$(jq -r 'map(.label + ":" + .sub) | join(",")' <<<"$G")" \
    "EliteGuías:guide,EliteGuías:achievements,Steam:community guides,Steam:global achievements,Wiki:kingdom-come-deliverance.fandom.com"
-eq "EliteGuías: its own search with the game's name" "$(jq -r '.[0].url' <<<"$G")" "https://www.eliteguias.com/buscar.php?q=Kingdom%20Come%3A%20Deliverance%20II"
+eq "EliteGuías: straight to the game's guide (its address worked out from the name)" "$(jq -r '.[0].url' <<<"$G")" "https://www.eliteguias.com/guias/k/kcd2/kingdom-come-deliverance-2.php"
+eq "…its search if there's none" "$(jq -r '.[0].fallback' <<<"$G")" "https://www.eliteguias.com/buscar.php?q=Kingdom%20Come%3A%20Deliverance%20II"
+eq "…and its achievements page" "$(jq -r '.[1].url' <<<"$G")" "https://www.eliteguias.com/trucos/k/kingdom-come-deliverance-2.php"
+eq "EliteGuías names: subtitle words count" "$(fn eg_slug "Tainted Grail: The Fall of Avalon")" "tainted-grail-the-fall-of-avalon tgtfoa"
+eq "…symbols and case" "$(fn eg_slug "BALL x PIT™")" "ball-x-pit bxp"
 eq "Steam guides of this game" "$(jq -r '.[2].url' <<<"$G")" "https://steamcommunity.com/app/700/guides/"
 "$CD" wiki 700 clear; GAMING_DECK_FANDOM_FMT="file://$T/nofandom/%s" "$CD" wiki 700 >/dev/null
 eq "no wiki found: remembered (not looked up on every open)" "$(jq -r '."700".base' "$HOME/.local/share/gaming-deck/gaming/wiki.json")" ""
