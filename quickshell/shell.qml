@@ -2001,6 +2001,7 @@ ShellRoot {
                         spacing: 8
 
                         ColumnLayout {
+                        id: fxGameCol
                         Layout.fillWidth: true; spacing: 8
                         visible: win.fxScope === "game"
 
@@ -2537,9 +2538,10 @@ ShellRoot {
 
                             // quick looks (vkBasalt's own effects) + presets from the internet
                             Rectangle {
-                                // grows only when there is a preset list to show
+                                // grows only when there is a preset list to show: down to the bottom of the window, 400 at least
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: win.fxPresets.length > 0 ? 400 : fxLooksCol.implicitHeight + 20
+                                Layout.preferredHeight: win.fxPresets.length > 0 ? Math.max(400, fxScroll.availableHeight - fxGameCol.y - y - 4)
+                                                                               : fxLooksCol.implicitHeight + 20
                                 visible: win.fxGame && !!win.fx.route && (win.fx.route.ok || win.fxReshade) && win.fx.recommended !== "none"
                                 radius: 8; color: pal.card; border.color: pal.border; border.width: 1
                                 ColumnLayout {
