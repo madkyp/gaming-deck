@@ -2167,7 +2167,7 @@ Gaming
   ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
   wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
   guides <appid> / gopen <url>  Guide links (EliteGuías, Fextralife, Steam guides, wiki) · open one in the browser
-  web <https://…> [--back] [--fallback <https://…>] | web toggle|close   A guide in a small browser over the game (GTK + WebKit, overlay layer)
+  web open <https://…> [--slot S] [--fallback U] [--reuse] | show [S]|hide|toggle|close|state   Guides in a tabbed browser over the game
   notes <appid> [set <text>]    Your notes for a game
   health                        Gaming health: multilib, GPU driver, Vulkan, 32-bit libraries, with fix commands (JSON)
 EOF
@@ -2837,39 +2837,56 @@ cmd_gopen() {
     else notify "Opened in your browser" "Leave the game (Alt+Tab) to read it."; fi
 }
 
-# web <https://…> [--back] | web close — a guide in a small browser over the game
-# (bin/gaming-deck-web: GTK + WebKit on the overlay layer); without it, your browser
+# web open <https://…> [--slot S] [--fallback <https://…>] [--reuse] | web show [S] | hide | toggle | close | state
+# Guides in a small tabbed browser over the game (bin/gaming-deck-web: GTK + WebKit
+# on the overlay layer). One process keeps every page opened while playing, each in
+# its tab ("slot"), so they stay where they were; without it, your browser.
 WEB_PID="${GAMING_DECK_WEB_PID:-${XDG_RUNTIME_DIR:-/tmp}/gaming-deck-web.pid}"
+WEB_STATE="${WEB_PID%.pid}.state"      # {"visible","current","slots":[…]}, written by the browser
+WEB_CTL="${WEB_PID%.pid}.ctl"          # requests, one JSON per line (+ SIGUSR2)
+OVERLAY_LAST="${WEB_PID%.pid}.last"    # what the key hid last: web | panel
 web_helper() {
+    [[ -n "${GAMING_DECK_WEB_HELPER:-}" ]] && { [[ -x "$GAMING_DECK_WEB_HELPER" ]] && echo "$GAMING_DECK_WEB_HELPER"; return 0; }
     local h; h="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/gaming-deck-web"
     [[ -x "$h" ]] || h="$HOME/.local/bin/gaming-deck-web"
     [[ -x "$h" ]] && have python3 && python3 -c 'import gi; gi.require_version("WebKit2", "4.1"); gi.require_version("GtkLayerShell", "0.1")' 2>/dev/null \
         && echo "$h"
     return 0
 }
-WEB_STATE="${WEB_PID%.pid}.state"      # shown | hidden, written by the browser
-web_shown() { web_running && [[ "$(cat "$WEB_STATE" 2>/dev/null)" != hidden ]]; }
 web_running() { local p; p="$(cat "$WEB_PID" 2>/dev/null)"; [[ "$p" =~ ^[0-9]+$ ]] && [[ -d "${PROC_ROOT:-/proc}/$p" ]]; }
+web_shown() { web_running && [[ "$(jq -r '.visible' "$WEB_STATE" 2>/dev/null)" == true ]]; }
+web_send() {   # json → the running browser
+    printf '%s\n' "$1" >> "$WEB_CTL" && kill -USR2 "$(cat "$WEB_PID")" 2>/dev/null
+}
 cmd_web() {
-    case "${1:-}" in
-        close) web_running && kill "$(cat "$WEB_PID")" 2>/dev/null; return 0 ;;
-        # hide / show it as it is (same page, same scroll): the panel's key does this
+    local act="${1:-}"; shift 2>/dev/null
+    case "$act" in
+        close) web_running && kill "$(cat "$WEB_PID")" 2>/dev/null; rm -f "$WEB_CTL"; return 0 ;;
         toggle) web_running && kill -USR1 "$(cat "$WEB_PID")" 2>/dev/null; return 0 ;;
+        hide) web_running && web_send '{"cmd":"hide"}'; return 0 ;;
+        show) web_running || return 3; web_send "$(jq -nc --arg s "${1:-}" '{cmd:"show", slot:$s}')"; return 0 ;;
+        state) if web_running && [[ -s "$WEB_STATE" ]]; then cat "$WEB_STATE"; else echo '{"visible":false,"slots":[]}'; fi; return 0 ;;
+        open) ;;
+        https://*) set -- "$act" "$@" ;;      # web <url> …: the old form, one "Web" tab
+        *) err "use: web open <https://…> [--slot S] [--fallback <https://…>] [--reuse] | web show [S]|hide|toggle|close|state"; return 2 ;;
     esac
-    [[ "${1:-}" =~ ^https:// ]] || { err "use: web <https://…> [--back] [--fallback <https://…>] | web close"; return 2; }
-    local url="$1" back="" fb=""; shift
+    local url="${1:-}" slot="Web" fb="" reuse=false; shift 2>/dev/null
+    [[ "$url" =~ ^https:// ]] || { err "use: web open <https://…> [--slot S] [--fallback <https://…>] [--reuse]"; return 2; }
     while (( $# )); do
         case "$1" in
-            --back) back=--back ;;
+            --slot) slot="${2:-Web}"; shift ;;
             --fallback) [[ "${2:-}" =~ ^https:// ]] && fb="$2"; shift ;;
+            --reuse) reuse=true ;;
         esac; shift
     done
+    local req; req="$(jq -nc --arg u "$url" --arg s "$slot" --arg f "$fb" --argjson r "$reuse" '{cmd:"open", slot:$s, url:$u, fallback:$f, reuse:$r}')"
+    if web_running; then web_send "$req"; return 0; fi
     local h; h="$(web_helper)"
     [[ -n "$h" ]] || { cmd_gopen "$url"; return; }     # webkit2gtk-4.1 / gtk-layer-shell missing
-    panel_env; mkdir -p "$STATE_DIR/logs"
+    panel_env; mkdir -p "$STATE_DIR/logs"; rm -f "$WEB_CTL"
     env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SteamAppId -u SteamGameId -u SteamOverlayGameId GDK_BACKEND=wayland \
-        CD_WEB_BIN="$(readlink -f "${BASH_SOURCE[0]}")" \
-        setsid -f "$h" "$url" $back ${fb:+--fallback "$fb"} --lang "$(cmd_uilang)" >"$STATE_DIR/logs/web.log" 2>&1 </dev/null
+        CD_WEB_BIN="$(readlink -f "${BASH_SOURCE[0]}")" GAMING_DECK_WEB_PID="$WEB_PID" \
+        setsid -f "$h" --lang "$(cmd_uilang)" --request "$req" >"$STATE_DIR/logs/web.log" 2>&1 </dev/null
 }
 
 # notes <appid> [set <text>] — the player's own notes for a game
@@ -2901,6 +2918,7 @@ panel_launch() {   # show(1)|hidden(0)
         setsid -f qs -n -p "$PANEL_QML" >"$STATE_DIR/logs/panel.log" 2>&1 </dev/null
 }
 panel_ipc() { panel_env; env -u LD_LIBRARY_PATH -u LD_PRELOAD qs ipc -p "$PANEL_QML" call panel "$1" >/dev/null 2>&1; }
+panel_shown() { panel_env; env -u LD_LIBRARY_PATH -u LD_PRELOAD qs ipc -p "$PANEL_QML" call panel state 2>/dev/null | jq -e '.shown == true' >/dev/null 2>&1; }
 
 # the activation key, written into Hyprland's config between two marker lines
 panel_hypr_conf() {
@@ -2958,11 +2976,16 @@ panel_key() {   # KEY | off
 cmd_panel() {
     case "${1:-toggle}" in
         toggle|show|hide)
-            # a guide open over the game: the key hides it and brings it back as it was
-            if [[ "${1:-toggle}" != show ]] && web_running; then
-                [[ "${1:-toggle}" == hide ]] && { web_shown && cmd_web toggle; panel_ipc close; return 0; }
-                panel_ipc close; cmd_web toggle; return 0
-            fi
+            # the key hides whatever is on screen (a guide tab or the panel) and
+            # brings back the same thing, as it was, the next time
+            case "${1:-toggle}" in
+                hide) web_shown && cmd_web hide; panel_ipc close; return 0 ;;
+                toggle)
+                    if web_shown; then cmd_web hide; panel_ipc close; echo web > "$OVERLAY_LAST"; return 0; fi
+                    if panel_shown; then panel_ipc close; echo panel > "$OVERLAY_LAST"; return 0; fi
+                    if [[ "$(cat "$OVERLAY_LAST" 2>/dev/null)" == web ]] && web_running; then cmd_web show; return 0; fi ;;
+                show) web_shown && cmd_web hide ;;
+            esac
             local fn="${1:-toggle}"; fn="${fn/show/open}"; fn="${fn/hide/close}"
             panel_ipc "$fn" && return 0
             [[ "${1:-toggle}" == hide ]] && return 0

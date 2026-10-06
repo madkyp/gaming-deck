@@ -15,6 +15,7 @@ export HOME="$T/home"
 export GAMING_DECK_UMBRAL_RUNNING="$T/umbral-running.json"   # never the real one
 export GAMING_DECK_SCX_RULE_OLD="$T/no-old-rule"   # never this PC's /etc
 export GAMING_DECK_WEB_PID="$T/web.pid"   # never the real guide browser
+export GAMING_DECK_WEB_HELPER="$T/no-web-helper"   # …nor ever started (guides go to the xdg-open stub)
 export GAMING_DECK_PANEL_QML="$T/no-panel.qml"   # never a real panel (install.sh puts one in the test $HOME)
 export GAMING_DECK_FX_EXTRA_PACKAGES="$T/fx-extra.json"; echo "[]" > "$T/fx-extra.json"   # community packs: none unless a test adds one
 unset XDG_DATA_HOME XDG_CACHE_HOME XDG_CONFIG_HOME GAMING_DECK_APPS_DIR INSTALL_ANY_APPS_DIR GITHUB_TOKEN
@@ -1445,15 +1446,19 @@ eq "language: a game's LC_ALL=C doesn't hide the system's Spanish" "$(LC_ALL=C L
 eq "…English otherwise" "$(LC_ALL=C LC_MESSAGES= LANG=en_GB.UTF-8 "$CD" uilang)" en
 mv "$T/ui.json.keep" "$HOME/.local/share/gaming-deck/ui.json"
 # the guide browser over the game
-"$CD" web "http://x.example" >/dev/null 2>&1; eq "web: https only" "$?" 2
+"$CD" web open "http://x.example" >/dev/null 2>&1; eq "web: https only" "$?" 2
 eq "web close with none open" "$("$CD" web close; echo $?)" 0
 # the key with a guide open: hide it / show it again as it was (SIGUSR1 to the browser), panel left closed
 stub qs 'echo "qs $*" >> "'"$T"'/qsweb.log"'
-( trap '' USR1; exec sleep 300 ) & WEBP2=$!; echo "$WEBP2" > "$T/web.pid"; echo shown > "$T/web.state"
+( trap '' USR1 USR2; exec sleep 300 ) & WEBP2=$!; echo "$WEBP2" > "$T/web.pid"; echo '{"visible":true,"slots":[{"slot":"Map Genie · mapa"}]}' > "$T/web.state"
 GAMING_DECK_PANEL_QML="$T/panel.qml" "$CD" panel >/dev/null 2>&1; eq "the key with a guide open: no new panel" "$(grep -c '^qs -n' "$T/qsweb.log" 2>/dev/null)" 0
 has "…the panel told to close instead" "$(cat "$T/qsweb.log" 2>/dev/null)" "call panel close"
 yes "…the guide is kept (hidden, not closed)" "kill -0 $WEBP2"
-kill "$WEBP2" 2>/dev/null; rm -f "$T/web.pid" "$T/web.state" "$T/qsweb.log"
+eq "…and remembers it was the guide that was on screen" "$(cat "$T/web.last")" web
+has "a guide request goes to the running browser (its own tab)" "$("$CD" web open https://mapgenie.io/x --slot "Map Genie · mapa" --reuse; cat "$T/web.ctl")" '{"cmd":"open","slot":"Map Genie · mapa","url":"https://mapgenie.io/x","fallback":"","reuse":true}'
+eq "web state: the open tabs" "$("$CD" web state | jq -r '.slots[0].slot')" "Map Genie · mapa"
+kill "$WEBP2" 2>/dev/null; rm -f "$T/web.pid" "$T/web.state" "$T/web.ctl" "$T/web.last" "$T/qsweb.log"
+eq "web state with no browser: nothing open" "$("$CD" web state)" '{"visible":false,"slots":[]}'
 bash -c 'source "$1"; web_helper() { :; }; cmd_web https://example.org/' _ "$CD" >/dev/null 2>&1
 eq "no WebKit / layer-shell: the guide goes to the browser instead" "$?" 0
 # notes

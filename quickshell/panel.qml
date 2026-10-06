@@ -75,7 +75,8 @@ ShellRoot {
         "Achievement unlocked": "Logro desbloqueado",
         "close": "cerrar", "move": "moverse", "reveal": "ver", "tabs": "pestañas", "Space": "Espacio", "Show hidden": "Mostrar ocultos",
         "Open over the game (Esc comes back here):": "Se abren encima del juego (Esc vuelve aquí):",
-        "Search": "Buscar", "on": "en", "wiki": "wiki", "interactive map": "mapa interactivo"
+        "Search": "Buscar", "on": "en", "wiki": "wiki", "interactive map": "mapa interactivo",
+        "search": "búsqueda", "Translation": "Traducción", "Open over the game:": "Abierto encima del juego:"
     })
     function tr(s) { return lang === "es" && es[s] !== undefined ? es[s] : s; }
 
@@ -99,7 +100,7 @@ ShellRoot {
     }
     Job { id: jIngame }  Job { id: jAch }  Job { id: jGuides }  Job { id: jWiki }
     Job { id: jSearch }  Job { id: jPage } Job { id: jNotes }   Job { id: jSave }
-    Job { id: jTemps }   Job { id: jOpen } Job { id: jMisc }
+    Job { id: jTemps }   Job { id: jOpen } Job { id: jMisc }   Job { id: jWebSt }
     Process { id: jStat; property var cur: null
         stdout: StdioCollector { onStreamFinished: { var c = jStat.cur; jStat.cur = null; if (c) c(text.trim()); } } }
 
@@ -174,7 +175,14 @@ ShellRoot {
         wikiSearch(q);
     }
     // guides open over the game (gaming-deck-web); Esc there brings the panel back
-    function openUrl(u, fallback) { call(jOpen, ["web", u, "--back"].concat(fallback ? ["--fallback", fallback] : []), null); hide(); }
+    // guides open over the game, each site in its own tab of gaming-deck-web, which
+    // keeps them where they were (reuse: show the tab as it is); Esc there comes back here
+    function openUrl(u, fallback, slot, reuse) {
+        call(jOpen, ["web", "open", u, "--slot", slot || "Web"].concat(fallback ? ["--fallback", fallback] : []).concat(reuse ? ["--reuse"] : []), null);
+        hide();
+    }
+    property var webTabs: []           // the guide tabs open over the game
+    function loadWebTabs() { call(jWebSt, ["web", "state"], function (t) { var w = parse(t, {}); root.webTabs = w.slots || []; }); }
     function browserUrl(u) { call(jOpen, ["gopen", u], null); }
     // a wiki page through Google Translate's web proxy (host dots → dashes, dashes doubled)
     function translated(u) {
@@ -198,6 +206,7 @@ ShellRoot {
     // ---- show / hide, toggled by the key ----
     function show() {
         refreshGame(function () { loadAll(); });
+        loadWebTabs();
         shown = true;
         focusTimer.restart();
     }
@@ -233,7 +242,7 @@ ShellRoot {
         interval: 3000; running: true; repeat: true
         onTriggered: {
             root.now = Math.floor(Date.now() / 1000);
-            if (root.shown) root.call(jTemps, ["temps"], root.readTemps);
+            if (root.shown) { root.call(jTemps, ["temps"], root.readTemps); root.loadWebTabs(); }
             if (!root.game.appid || root.idle % 4 === 3) {
                 root.refreshGame(function (changed) {
                     if (!root.game.appid) {
@@ -518,6 +527,24 @@ ShellRoot {
                     visible: root.tab === "guide" && !!root.game.appid
                     Column {
                         id: links; width: parent.width; spacing: 6
+                        // tabs already open over the game: back to them as they were
+                        Text { visible: root.webTabs.length > 0; text: root.tr("Open over the game:"); color: pal.dim; font.pixelSize: 11 }
+                        Flow {
+                            width: parent.width; spacing: 6; visible: root.webTabs.length > 0
+                            Repeater {
+                                model: root.webTabs
+                                Rectangle {
+                                    width: Math.min(wtt.implicitWidth + 18, parent.width); height: 26; radius: 5
+                                    color: wma.containsMouse ? pal.cardHi : pal.card; border.color: pal.accent; border.width: 1
+                                    Text {
+                                        id: wtt; anchors.centerIn: parent; width: Math.min(implicitWidth, parent.width - 18); elide: Text.ElideRight
+                                        font.pixelSize: 12; color: pal.accent; textFormat: Text.StyledText
+                                        text: "▸ <b>" + modelData.slot + "</b>" + (modelData.title ? " <font color='#7c8aa0'>" + modelData.title.replace(/</g, "&lt;") + "</font>" : "")
+                                    }
+                                    MouseArea { id: wma; anchors.fill: parent; hoverEnabled: true; onClicked: { root.call(jOpen, ["web", "show", modelData.slot], null); root.hide(); } }
+                                }
+                            }
+                        }
                         Text { text: root.tr("Open over the game (Esc comes back here):"); color: pal.dim; font.pixelSize: 11 }
                         Flow {
                             width: parent.width; spacing: 6
@@ -531,7 +558,7 @@ ShellRoot {
                                         textFormat: Text.StyledText; color: pal.text
                                         text: "<b>" + modelData.label + "</b> <font color='#7c8aa0'>" + root.tr(modelData.sub) + " ↗</font>"
                                     }
-                                    MouseArea { id: lma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.url, modelData.fallback) }
+                                    MouseArea { id: lma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.url, modelData.fallback, modelData.label + " · " + root.tr(modelData.sub), true) }
                                 }
                             }
                         }
@@ -563,7 +590,7 @@ ShellRoot {
                                         id: st; anchors.centerIn: parent; font.pixelSize: 12; color: pal.text; textFormat: Text.StyledText
                                         text: root.tr("Search") + " <b>«" + searchBox.text.trim().replace(/</g, "&lt;") + "»</b> " + root.tr("on") + " <b>" + modelData.label + "</b> ↗"
                                     }
-                                    MouseArea { id: sma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.search + encodeURIComponent(searchBox.text.trim())) }
+                                    MouseArea { id: sma; anchors.fill: parent; hoverEnabled: true; onClicked: root.openUrl(modelData.search + encodeURIComponent(searchBox.text.trim()), "", modelData.label + " · " + root.tr("search"), false) }
                                 }
                             }
                         }
@@ -624,7 +651,7 @@ ShellRoot {
                                 visible: root.lang === "es"
                                 width: trt.implicitWidth + 14; height: 24; radius: 5; color: pal.card; border.color: pal.accent; border.width: 1
                                 Text { id: trt; anchors.centerIn: parent; text: "TRADUCIR AL ESPAÑOL ↗"; color: pal.accent; font.pixelSize: 11; font.bold: true }
-                                MouseArea { anchors.fill: parent; onClicked: if (root.page) root.openUrl(root.translated(root.page.url)) }
+                                MouseArea { anchors.fill: parent; onClicked: if (root.page) root.openUrl(root.translated(root.page.url), "", root.tr("Translation"), false) }
                             }
                         }
                         Flickable {
