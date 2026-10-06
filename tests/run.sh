@@ -1423,6 +1423,12 @@ WJ
 W="$(fn wiki_text https://kcd.fandom.com "KCD Wiki" < "$T/wikipage.json")"
 eq "wiki page → readable text (no infobox, tables, edit links or references)" "$(jq -r .text <<<"$W")" "$(printf 'Henry is the hero.\n\n§ Story\n\n• Skalitz\n• Rattay')"
 eq "…with its address and licence" "$(jq -c '[.url, .source, .license]' <<<"$W")" '["https://kcd.fandom.com/wiki/Henry","KCD Wiki","CC BY-SA 3.0"]'
+# OVERLAY's list: achievements, wiki and anti-cheat per installed game
+mkdir -p "$PS/steamapps/common/KCD2/Game/EasyAntiCheat"
+mkdir -p "$HOME/.cache/gaming-deck/fx"; echo '[]' > "$HOME/.cache/gaming-deck/fx/awacy.json"; echo '{}' > "$HOME/.cache/gaming-deck/fx/store-700.json"
+eq "ovgames: each game with achievements, wiki and the anti-cheat its folder ships" \
+   "$("$CD" ovgames | jq -c '.[] | [.appid, .ach.unlocked, .ach.total, (.wiki | has("base")), .anticheats]')" '["700",2,3,false,["Easy Anti-Cheat"]]'
+eq "no anti-cheat folder: none" "$(fn game_ac_files "$T/nowhere")" "[]"
 # notes
 "$CD" notes 700 set "$(printf 'línea 1\n[19:42] jefe')"
 eq "notes are kept as written" "$("$CD" notes 700)" "$(printf 'línea 1\n[19:42] jefe')"

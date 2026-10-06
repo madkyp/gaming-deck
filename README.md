@@ -18,7 +18,7 @@ Gaming Deck was the GAMING tab of **Control Deck**, which became two apps: **[Sy
 
 ## ✨ Features
 
-The sidebar has eight sections, in English or Spanish (**ESP / ENG** at the bottom):
+The sidebar has nine sections, in English or Spanish (**ESP / ENG** at the bottom):
 
 - **LIBRARY**: every installed Steam game and every Umbral game as a **cover** (Steam's own artwork; Umbral's covers), with its store, ProtonDB tier and whether it has a look. A game's **page** shows its banner and logo, ▶ **PLAY**, and everything below.
 - **LIBRARY**: your installed Steam games — plus the games of [Umbral](https://github.com/madkyp/umbral-project) (Battle.net and games from no store) — with size, **ProtonDB** rating for Steam games (public summary, cached 24 h), the Proton version each one uses, and **▶ PLAY** to start any of them from its own launcher.
@@ -62,6 +62,8 @@ The sidebar has eight sections, in English or Spanish (**ESP / ENG** at the bott
 | ![PREFIXES — Wine/Proton prefixes: backup, clone, delete](screenshots/prefixes.png) | ![MAINTENANCE — GE-Proton, clean-up, profile backup and self-update](screenshots/maintenance.png) |
 
 ## 🏆 In-game panel
+
+The **OVERLAY** section of the sidebar sets it up without a terminal: the key (F6…F9, SUPER + G or any other; a key Hyprland already uses is refused), the pop-ups, a PREVIEW, and for every installed game its achievement progress, the wiki found for it (change it or look it up again) and its anti-cheat. From a terminal:
 
 ```bash
 gaming-deck panel key F6        # the key (written into hyprland.lua/.conf between marker lines, backup kept); "off" removes it

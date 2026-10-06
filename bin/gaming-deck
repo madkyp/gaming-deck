@@ -2163,6 +2163,7 @@ Gaming
   hook <umbral:id>              For Umbral: env (ReShade/vkBasalt) + TEMPS for a game it launches (JSON)
   temps [pid] / overlay [pid]   CPU/GPU °C · on-screen temperature line until <pid> exits (no pid: 10 s preview)
   panel [toggle|key <KEY|off>|toast on|off|status]   In-game panel (F6): achievements, guides, notes over the game
+  ovgames                       Installed Steam games with achievements progress and wiki (JSON, for OVERLAY)
   ingame / ach <appid>          The Steam game being played · its achievements from Steam's own cache (JSON)
   wiki <appid> [search <text>|page <title>|set <url>|clear]   The game's Fandom wiki (MediaWiki API, CC BY-SA)
   guides <appid> / gopen <url>  Guide links (EliteGuías, Steam guides, wiki) · open one in the browser
@@ -2783,7 +2784,8 @@ cmd_gopen() {
     [[ "${1:-}" =~ ^(https://|steam://) ]] || { err "use: gopen <https://…>"; return 2; }
     have xdg-open || { err "xdg-open is missing"; return 4; }
     env -u LD_LIBRARY_PATH -u LD_PRELOAD setsid -f xdg-open "$1" >/dev/null 2>&1 </dev/null
-    notify "Opened in your browser" "Leave the game (Alt+Tab) to read it."
+    if [[ "$(cmd_uilang)" == es ]]; then notify "Abierto en el navegador" "Sal del juego (Alt+Tab) para leerlo."
+    else notify "Opened in your browser" "Leave the game (Alt+Tab) to read it."; fi
 }
 
 # notes <appid> [set <text>] — the player's own notes for a game
@@ -2888,6 +2890,29 @@ cmd_panel() {
         *) err "use: panel [toggle|show|hide|start|key <KEY|off>|toast on|off|status]"; return 2 ;;
     esac
 }
+# anti-cheat a game folder ships → JSON list
+game_ac_files() {
+    [[ -d "$1" ]] || { echo '[]'; return 0; }
+    find "$1" -maxdepth 4 \( -iname 'EasyAntiCheat*' -o -iname 'BattlEye' -o -iname 'BEService*' -o -iname 'vgc.exe' \) 2>/dev/null \
+        | awk '{ l = tolower($0) } l ~ /easyanticheat/ { print "Easy Anti-Cheat" } l ~ /battleye|beservice/ { print "BattlEye" } l ~ /vgc\.exe/ { print "Vanguard" }' \
+        | jq -Rsc 'split("\n") | map(select(. != "")) | unique'
+}
+# ovgames → every installed Steam game with its achievements and wiki, for OVERLAY
+cmd_ovgames() {
+    local id name dir size lib a w ac
+    {
+        while IFS= read -r id && IFS= read -r name && IFS= read -r dir && IFS= read -r size && IFS= read -r lib; do
+            a="$(cmd_ach "$id" | jq -c 'if .error then null else {unlocked, total, percent} end' 2>/dev/null)"
+            w="$(wiki_get "$id")"; ac="$(fx_online "$id" | jq -c '.anticheats' 2>/dev/null)"
+            # …and what the game's own folder ships (AreWeAntiCheatYet misses some, e.g. Lords of the Fallen)
+            ac="$(jq -c --argjson f "$(game_ac_files "$lib/steamapps/common/$dir")" '. + $f | unique' <<<"${ac:-[]}")"
+            # anti-cheat: shown so it's clear why the panel never goes into the game
+            jq -nc --arg id "$id" --arg n "$name" --argjson a "${a:-null}" --argjson w "${w:-"{}"}" --argjson ac "${ac:-[]}" \
+                '{appid:$id, name:$n, ach:$a, wiki:$w, anticheats:$ac}'
+        done < <(steam_games)
+    } | jq -sc 'sort_by(.name | ascii_downcase)'
+}
+
 # run/session: the panel watches for achievements while the game runs
 panel_autostart() {
     [[ "$(panel_setting toast true)" == true && -f "$PANEL_QML" ]] && have qs || return 0
@@ -5010,6 +5035,7 @@ main() {
         gopen)       cmd_gopen "${1:-}" ;;
         notes)       cmd_notes "$@" ;;
         panel)       cmd_panel "$@" ;;
+        ovgames)     cmd_ovgames ;;
         shaderclean) with_notify "Shader cache cleaned ✓" "Shader cache clean failed ✗" "$1" cmd_shaderclean "$1" "$2" ;;
         selfupdate)  with_notify "Gaming Deck updated ✓" "Gaming Deck update failed ✗" "gaming-deck" cmd_selfupdate ;;
         ""|-h|--help|help) usage ;;

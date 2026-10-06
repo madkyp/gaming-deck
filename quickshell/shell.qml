@@ -66,6 +66,7 @@ ShellRoot {
         readonly property var sections: [
             ["library",  "", "LIBRARY"],
             ["fx",       "", "FX"],
+            ["overlay",  "\uf091", "OVERLAY"],
             ["status",   "", "STATUS"],
             ["health",   "", "HEALTH"],
             ["shaders",  "", "SHADERS"],
@@ -127,6 +128,7 @@ ShellRoot {
             else if (gameView === "bench") { if (selGame && selGameSource === "steam") benchProc.running = true; }
             else if (gameView === "prefixes") { pfxProc.running = true; pfxBakProc.running = true; }
             else if (gameView === "health") healthProc.running = true;
+            else if (gameView === "overlay") { ovStatusProc.running = true; if (!ovGames.length) ovGamesProc.running = true; }
             else if (gameView === "fx" && !fxStatProc.running) openFx();
             else if (gameView === "maint") { protonProc.running = true; gcleanProc.running = true; selfcheckProc.running = true; }
         }
@@ -572,6 +574,49 @@ ShellRoot {
             stdout: StdioCollector { onStreamFinished: { try { win.health = JSON.parse(text); } catch (e) { win.health = {}; } } }
         }
         Process { id: fixCopyProc }
+        // OVERLAY: the in-game panel's settings and each game's achievements / wiki
+        property var    ovStatus: ({})
+        property var    ovGames: []
+        property string ovMsg: ""
+        property string ovWikiFor: ""
+        function ovRun(args, reloadGames) { ovRunProc.reload = !!reloadGames; ovRunProc.command = [win.scriptPath].concat(args); ovRunProc.running = true; }
+        Process {
+            id: ovStatusProc
+            command: [win.scriptPath, "panel", "status"]
+            stdout: StdioCollector { onStreamFinished: { try { win.ovStatus = JSON.parse(text); } catch (e) { win.ovStatus = {}; } } }
+        }
+        Process {
+            id: ovGamesProc
+            command: [win.scriptPath, "ovgames"]
+            stdout: StdioCollector { onStreamFinished: { try { win.ovGames = JSON.parse(text); } catch (e) { win.ovGames = []; } } }
+        }
+        Process {
+            id: ovRunProc
+            property bool reload: false
+            property string err: ""
+            stderr: StdioCollector { onStreamFinished: ovRunProc.err = text.trim() }
+            onRunningChanged: if (running) { err = ""; win.ovMsg = ""; }
+            onExited: function (code) { ovMsgTimer.restart(); ovRunProc.done = code; }
+            property int done: -1
+        }
+        // the outcome once stderr is read too (it may come after the exit)
+        Timer { id: ovMsgTimer; interval: 150; onTriggered: win.ovDone() }
+        function ovDone() {
+            if (ovRunProc.done < 0) return;
+            var code = ovRunProc.done, e = ovRunProc.err; ovRunProc.done = -1;
+            var args = ovRunProc.command.slice(1);
+            if (code !== 0) {
+                var m = /already used in Hyprland \((.*)\)/.exec(e);
+                win.ovMsg = "✗ " + (m ? win.t("That key is already used in Hyprland: ") + m[1]
+                                  : e.indexOf("not a key") >= 0 ? win.t("Not a key (e.g. F6, SUPER + G)")
+                                  : e.indexOf("Fandom wiki address") >= 0 ? win.t("Use a Fandom wiki address, e.g. https://eldenring.fandom.com")
+                                  : e.replace(/^ERROR: /, ""));
+            } else if (args[0] === "panel" && args[1] === "key")
+                win.ovMsg = "✔ " + (args[2] === "off" ? win.t("Key removed from Hyprland's config.") : win.t("Saved in Hyprland's config (a backup of it is kept)."));
+            else if (args[0] === "gopen") win.ovMsg = "✔ " + win.t("Opened in your browser.");
+            ovStatusProc.running = true;
+            if (ovRunProc.reload) { win.ovWikiFor = ""; ovGamesProc.running = true; }
+        }
         Process {
             id: langProc
             running: true
@@ -3031,6 +3076,153 @@ ShellRoot {
                                             Layout.fillWidth: true; Layout.leftMargin: 20
                                             visible: modelData.fix !== ""
                                             cmd: modelData.fix
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- OVERLAY: the in-game panel (key, pop-ups) and what it knows of each game ----
+                Flickable {
+                    id: ovPage
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    visible: win.gameView === "overlay"
+                    clip: true; contentWidth: width; contentHeight: ovCol.implicitHeight + 8
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
+                    ColumnLayout {
+                        id: ovCol
+                        width: ovPage.width - 14; spacing: 14
+
+                        Rectangle {
+                            Layout.fillWidth: true; implicitHeight: ovSet.implicitHeight + 28
+                            radius: 12; color: pal.card; border.color: pal.border; border.width: 1
+                            ColumnLayout {
+                                id: ovSet; anchors.fill: parent; anchors.margins: 14; spacing: 10
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 10
+                                    Text { text: win.t("IN-GAME PANEL"); color: pal.text; font.family: win.mono; font.pixelSize: 12; font.bold: true; font.letterSpacing: 3 }
+                                    Text {
+                                        Layout.fillWidth: true; font.family: win.mono; font.pixelSize: 11
+                                        color: win.ovStatus.key ? pal.ok : pal.amber
+                                        text: !win.ovStatus.installed ? win.t("not installed: run install.sh")
+                                              : (win.ovStatus.key ? win.t("press ") + win.ovStatus.key + win.t(" in any Steam game") : win.t("no key yet: pick one below"))
+                                    }
+                                    MiniBtn {
+                                        width: Math.max(110, implicitWidth); height: 32; primary: false
+                                        label: win.t("PREVIEW"); on: !!win.ovStatus.installed
+                                        onClicked: win.ovRun(["panel", "show"])
+                                    }
+                                }
+                                Hint { text: win.t("Achievements (the easiest first, a pop-up when you unlock one), guides (the game's wiki read in the panel; EliteGuías and Steam guides in the browser) and your notes, over the game. Hyprland draws it: nothing goes into the game, so it is safe with anti-cheat. Esc or the key closes it.") }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    Text { text: win.t("KEY"); color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 2; Layout.preferredWidth: 150 }
+                                    Repeater {
+                                        model: ["F6", "F7", "F8", "F9", "SUPER + G"]
+                                        Chip { label: modelData; active: win.ovStatus.key === modelData; onClicked: win.ovRun(["panel", "key", modelData]) }
+                                    }
+                                    Field {
+                                        id: ovKeyField; Layout.preferredWidth: 150; implicitHeight: 28
+                                        placeholderText: win.t("other: ALT + F1…")
+                                        onAccepted: if (text.trim() !== "") win.ovRun(["panel", "key", text.trim()])
+                                    }
+                                    Chip { label: win.t("SET"); on: ovKeyField.text.trim() !== ""; onClicked: win.ovRun(["panel", "key", ovKeyField.text.trim()]) }
+                                    Chip { label: win.t("NO KEY"); tint: pal.bad; on: !!win.ovStatus.key; onClicked: win.ovRun(["panel", "key", "off"]) }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    Text { text: win.t("ACHIEVEMENT POP-UPS"); color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 2; Layout.preferredWidth: 150 }
+                                    Chip { label: win.t("ON"); active: win.ovStatus.toast !== false; onClicked: win.ovRun(["panel", "toast", "on"]) }
+                                    Chip { label: win.t("OFF"); active: win.ovStatus.toast === false; tint: pal.amber; onClicked: win.ovRun(["panel", "toast", "off"]) }
+                                    Hint { text: win.t("from the start in games launched through the deck; in the others, once the panel has been opened") }
+                                }
+                                Text {
+                                    Layout.fillWidth: true; visible: win.ovMsg !== ""; wrapMode: Text.WordWrap
+                                    text: win.ovMsg; font.family: win.mono; font.pixelSize: 10
+                                    color: win.ovMsg.indexOf("✗") === 0 ? pal.bad : pal.ok
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; implicitHeight: ovList.implicitHeight + 28
+                            radius: 12; color: pal.card; border.color: pal.border; border.width: 1
+                            ColumnLayout {
+                                id: ovList; anchors.fill: parent; anchors.margins: 14; spacing: 8
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 10
+                                    Text { text: win.t("YOUR GAMES"); color: pal.text; font.family: win.mono; font.pixelSize: 12; font.bold: true; font.letterSpacing: 3 }
+                                    Hint { text: win.t("achievements from Steam's own files · guides found for each game") }
+                                    Chip { label: ovGamesProc.running ? win.t("READING…") : win.t("REFRESH"); on: !ovGamesProc.running; onClicked: ovGamesProc.running = true }
+                                }
+                                Text {
+                                    visible: win.ovGames.length === 0
+                                    text: ovGamesProc.running ? win.t("READING YOUR LIBRARY…") : win.t("NO GAMES FOUND")
+                                    color: pal.dim; font.family: win.mono; font.pixelSize: 11
+                                }
+                                Repeater {
+                                    model: win.ovGames
+                                    Rectangle {
+                                        id: ovRow
+                                        required property var modelData
+                                        Layout.fillWidth: true; implicitHeight: ovRowCol.implicitHeight + 16
+                                        radius: 8; color: pal.panel; border.color: pal.border; border.width: 1
+                                        ColumnLayout {
+                                            id: ovRowCol; anchors.fill: parent; anchors.margins: 8; spacing: 6
+                                            RowLayout {
+                                                Layout.fillWidth: true; spacing: 10
+                                                Text {
+                                                    Layout.preferredWidth: 260; elide: Text.ElideRight
+                                                    text: ovRow.modelData.name; color: pal.text; font.pixelSize: 13; font.bold: true
+                                                }
+                                                // achievements
+                                                ColumnLayout {
+                                                    Layout.preferredWidth: 190; Layout.maximumWidth: 190; spacing: 3
+                                                    Text {
+                                                        font.family: win.mono; font.pixelSize: 10
+                                                        color: !ovRow.modelData.ach ? pal.dim : (ovRow.modelData.ach.percent >= 100 ? pal.ok : pal.text)
+                                                        text: ovRow.modelData.ach ? "🏆 " + ovRow.modelData.ach.unlocked + "/" + ovRow.modelData.ach.total + "  ·  " + ovRow.modelData.ach.percent + " %"
+                                                                                  : win.t("no achievements saved yet")
+                                                    }
+                                                    Rectangle {
+                                                        Layout.fillWidth: true; height: 4; radius: 2; color: pal.card; visible: !!ovRow.modelData.ach
+                                                        Rectangle { height: parent.height; radius: 2; color: ovRow.modelData.ach && ovRow.modelData.ach.percent >= 100 ? pal.ok : pal.accent
+                                                                    width: parent.width * (ovRow.modelData.ach ? ovRow.modelData.ach.percent / 100 : 0) }
+                                                    }
+                                                }
+                                                // wiki
+                                                Text {
+                                                    Layout.preferredWidth: 320; Layout.leftMargin: 14; elide: Text.ElideRight
+                                                    font.family: win.mono; font.pixelSize: 10
+                                                    color: ovRow.modelData.wiki.base ? pal.dim : pal.amber
+                                                    text: ovRow.modelData.wiki.base ? win.t("wiki: ") + ovRow.modelData.wiki.name : win.t("no wiki found")
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                                Chip { label: "ELITEGUÍAS ↗"; onClicked: win.ovRun(["gopen", "https://www.eliteguias.com/buscar.php?q=" + encodeURIComponent(ovRow.modelData.name)]) }
+                                                Chip { label: "WIKI ↗"; visible: !!ovRow.modelData.wiki.base; onClicked: win.ovRun(["gopen", ovRow.modelData.wiki.base]) }
+                                                Chip { label: win.t("SET WIKI"); active: win.ovWikiFor === ovRow.modelData.appid; onClicked: win.ovWikiFor = (win.ovWikiFor === ovRow.modelData.appid ? "" : ovRow.modelData.appid) }
+                                            }
+                                            // anti-cheat: why the panel stays outside the game
+                                            Text {
+                                                Layout.fillWidth: true; visible: (ovRow.modelData.anticheats || []).length > 0; wrapMode: Text.WordWrap
+                                                text: "⚠ " + (ovRow.modelData.anticheats || []).join(", ") + win.t(": the panel is drawn by Hyprland, outside the game — safe")
+                                                color: pal.amber; font.family: win.mono; font.pixelSize: 10
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true; spacing: 8; visible: win.ovWikiFor === ovRow.modelData.appid
+                                                Field {
+                                                    id: ovWikiField; Layout.fillWidth: true; implicitHeight: 28
+                                                    placeholderText: "https://<game>.fandom.com"
+                                                    text: ovRow.modelData.wiki.base || ""
+                                                    onAccepted: win.ovRun(["wiki", ovRow.modelData.appid, "set", text.trim()], true)
+                                                }
+                                                Chip { label: win.t("SAVE"); onClicked: win.ovRun(["wiki", ovRow.modelData.appid, "set", ovWikiField.text.trim()], true) }
+                                                Chip { label: win.t("FIND AGAIN"); onClicked: win.ovRun(["wiki", ovRow.modelData.appid, "clear"], true) }
+                                            }
                                         }
                                     }
                                 }
