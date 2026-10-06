@@ -90,7 +90,11 @@ def main():
         GtkLayerShell.set_anchor(win, edge, True)
         GtkLayerShell.set_margin(win, edge, 28)
     GtkLayerShell.set_exclusive_zone(win, -1)
+    # exclusive only to take the keyboard when it opens (Esc works at once, even if
+    # the game holds the pointer), then on demand: a click on another window gives
+    # it the keyboard (exclusive locked every other window out while this was open)
     GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+    GLib.timeout_add(500, lambda: GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND) and False)
     mon = Gdk.Display.get_default().get_monitor(0)
     seat = Gdk.Display.get_default().get_default_seat()
     try:

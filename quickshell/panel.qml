@@ -315,7 +315,12 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "gaming-deck-panel"
-        WlrLayershell.keyboardFocus: root.shown ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        // exclusive for a moment when it opens (it gets the keyboard, even over a game holding
+        // the pointer), then on demand: other windows take the keyboard back with a click
+        property bool grab: false
+        WlrLayershell.keyboardFocus: !root.shown ? WlrKeyboardFocus.None : (grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
+        onVisibleChanged: if (visible) { grab = true; grabTimer.restart(); }
+        Timer { id: grabTimer; interval: 500; onTriggered: win.grab = false }
         color: "transparent"
 
         Rectangle {
