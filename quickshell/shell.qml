@@ -670,11 +670,25 @@ ShellRoot {
             }
         }
         Process {
+            id: fxAddShadersProc
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    var r = {}; try { r = JSON.parse(text); } catch (e) { }
+                    var all = (r.added || []).concat(r.had || []);
+                    if (all.length === 0) { win.fxMsg = "No ReShade preset in that file (it needs a Techniques= line)."; return; }
+                    win.fxMsg = win.t("No preset in that file, only shaders: ") + all.join(", ")
+                              + ((r.added || []).length ? win.t(" (added).") : win.t(" (you already had them)."))
+                              + win.t(" Download the mod's preset file (.ini) too and IMPORT it.");
+                }
+            }
+        }
+        Process {
             id: fxImpListProc
             stdout: StdioCollector {
                 onStreamFinished: {
                     var l = []; try { l = JSON.parse(text); } catch (e) { }
-                    if (l.length === 0) { win.fxMsg = "No ReShade preset in that file (it needs a Techniques= line)."; return; }
+                    // no preset: maybe a file of shaders only (e.g. a mod's "add this shader" download) — keep them and say so
+                    if (l.length === 0) { fxAddShadersProc.command = [win.scriptPath, "fx", "addshaders", win.fxImportFile]; fxAddShadersProc.running = true; return; }
                     // an anti-cheat game asks for a second click: keep the preset on screen to give it
                     if (l.length === 1 && !win.fxAnticheat) {
                         win.fxMsg = "";

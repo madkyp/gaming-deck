@@ -1006,6 +1006,10 @@ eq "a chosen preset from the archive" "$(jq -r .name "$RP/report.json")" "Soft"
 eq "switching route keeps an imported look" "$(jq -c '[.source, .name, .mode]' "$RP/report.json")" '["file","Soft","vkbasalt"]'
 echo 'nothing' > "$T/nexus/readme.txt"
 "$CD" fx import steam:5000 "$T/nexus/readme.txt" >/dev/null 2>&1; eq "a file without a preset is refused" "$?" 4
+mkdir -p "$T/nexus/onlyfx"; echo 'technique Sharp2 { pass { } }' > "$T/nexus/onlyfx/Sharp2.fx"; cp "$NX/reshade-shaders/Shaders/Vibrance.fx" "$T/nexus/onlyfx/"
+( cd "$T/nexus/onlyfx" && bsdtar -a -cf "$T/nexus/onlyfx.zip" Sharp2.fx Vibrance.fx )
+eq "an archive of shaders only: no presets…" "$("$CD" fx importlist "$T/nexus/onlyfx.zip")" "[]"
+eq "…addshaders keeps the new ones and names the ones already there" "$("$CD" fx addshaders "$T/nexus/onlyfx.zip" | jq -c .)" '{"added":["Sharp2.fx"],"had":["Vibrance.fx"]}'
 "$CD" fx set steam:5000 off >/dev/null
 unset GAMING_DECK_RESHADE_URL GAMING_DECK_FF_D3DC_URL GAMING_DECK_FF_D3DC_SHA64 GAMING_DECK_FF_D3DC_SHA32 \
       GAMING_DECK_STEAM_ROOT GAMING_DECK_STEAM_RUNNING GAMING_DECK_FX_PACKAGES_URL GAMING_DECK_SFX_URL GAMING_DECK_AWACY_URL GAMING_DECK_STEAM_STORE_API

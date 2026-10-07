@@ -4202,6 +4202,32 @@ fx_presets_in() {   # dir → preset files (relative), best first: most techniqu
     done < <(find "$d" -type f \( -iname '*.ini' -o -iname '*.txt' \) -print0)
 }
 
+fx_import_slug() { local s="${1##*/}"; s="${s%.*}"; s="${s//[^A-Za-z0-9._-]/_}"; printf '%s' "${s:0:60}"; }
+# copy the shaders (.fx/.fxh) this install lacks and the textures from an unpacked archive
+# → {"added":[names], "had":[names]}
+fx_take_shaders() {   # dir archive-file
+    local d="$1" sub g added=() had=()
+    sub="$FX_DIR/Shaders/imported/$(fx_import_slug "$2")"
+    while IFS= read -r -d '' g; do
+        if [[ -n "$(fx_find "$(basename "$g")")" ]]; then had+=("$(basename "$g")"); continue; fi
+        mkdir -p "$sub"; cp -n -- "$g" "$sub/"; added+=("$(basename "$g")")
+    done < <(find "$d" -type f \( -iname '*.fx' -o -iname '*.fxh' \) -print0)
+    while IFS= read -r -d '' g; do
+        mkdir -p "$FX_DIR/Textures"; cp -n -- "$g" "$FX_DIR/Textures/"
+    done < <(find "$d" -type f -ipath '*/textures/*' \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.dds' -o -iname '*.bmp' -o -iname '*.tga' \) -print0)
+    jq -nc '{added:$ARGS.named.a | split("\n") | map(select(. != "")), had:$ARGS.named.h | split("\n") | map(select(. != ""))}' \
+        --arg a "$(printf '%s\n' "${added[@]}")" --arg h "$(printf '%s\n' "${had[@]}")"
+}
+# fx addshaders <file> — an archive with shaders but no preset: keep the shaders it brings
+cmd_fx_addshaders() {
+    local f="$1" d out
+    [[ -f "$f" ]] || { err "not found: $f"; return 2; }
+    d="$(fx_unpack "$f")" || { err "couldn't open $(basename "$f") (zip, 7z, rar, .ini or .txt)"; return 4; }
+    out="$(fx_take_shaders "$d" "$f")"; rm -rf "$d"
+    printf '%s\n' "$out"
+    history_add "fx shaders" gaming "$(basename "$f")" 0
+}
+
 # fx importlist <file> → [{path, effects}]
 cmd_fx_importlist() {
     local f="$1" d
@@ -4222,15 +4248,7 @@ cmd_fx_import() {
     [[ -n "$pick" ]] || pick="$(head -1 <<<"$list")"
     grep -qxF -- "$pick" <<<"$list" || { rm -rf "$d"; err "not a preset in that archive: $pick"; return 2; }
     # shaders and textures it brings
-    slug="${f##*/}"; slug="${slug%.*}"; slug="${slug//[^A-Za-z0-9._-]/_}"; slug="${slug:0:60}"
-    sub="$FX_DIR/Shaders/imported/$slug"
-    while IFS= read -r -d '' g; do
-        [[ -n "$(fx_find "$(basename "$g")")" ]] && continue
-        mkdir -p "$sub"; cp -n -- "$g" "$sub/"; n=$((n + 1))
-    done < <(find "$d" -type f \( -iname '*.fx' -o -iname '*.fxh' \) -print0)
-    while IFS= read -r -d '' g; do
-        mkdir -p "$FX_DIR/Textures"; cp -n -- "$g" "$FX_DIR/Textures/"
-    done < <(find "$d" -type f -ipath '*/textures/*' \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.dds' -o -iname '*.bmp' -o -iname '*.tga' \) -print0)
+    n="$(fx_take_shaders "$d" "$f" | jq -r '.added | length')"; slug="$(fx_import_slug "$f")"
     ((n)) && log "→ $n shader file(s) from the archive → Shaders/imported/$slug"
     local keep; keep="$(mktemp)"; cp -- "$d/$pick" "$keep"; rm -rf "$d"
     local label="${pick##*/}"; label="${label%.*}"
@@ -4356,6 +4374,7 @@ cmd_fx() {
         presets)  cmd_fx_presets "${1:-}" ;;
         set)      FX_SFX_GAME="${3:-}" cmd_fx_set "${1:-}" "${2:-}" ;;
         importlist) cmd_fx_importlist "${1:-}" ;;
+        addshaders) cmd_fx_addshaders "${1:-}" ;;
         link)     cmd_fx_link "$@" ;;
         import)   cmd_fx_import "${1:-}" "${2:-}" "${3:-}" ;;
         mode)     cmd_fx_mode "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
