@@ -250,6 +250,14 @@ eq "games shows it" "$("$CD" games | jq -r '.[] | select(.id == "200") | .compat
 hasnt "default removes the mapping" "$(cat "$CFG")" '"200"'
 eq "config braces balanced" "$(grep -c '{' "$CFG")" "$(grep -c '}' "$CFG")"
 
+section "Atomic file writes"
+RF() { bash -c 'source "$1"; replace_file "$2" "$3"' _ "$CD" "$@"; }
+mkdir -p "$T/rf/dots"; echo old > "$T/rf/dots/hyprland.conf"; chmod 600 "$T/rf/dots/hyprland.conf"; ln -s "$T/rf/dots/hyprland.conf" "$T/rf/link.conf"
+echo new > "$T/rf/new"; RF "$T/rf/new" "$T/rf/link.conf"
+yes "a symlinked config (dotfiles) stays a symlink" "[[ -L '$T/rf/link.conf' ]]"
+eq "…and its real file gets the new content" "$(cat "$T/rf/dots/hyprland.conf")" new
+eq "…keeping its mode" "$(stat -c %a "$T/rf/dots/hyprland.conf")" 600
+eq "no temp file left beside it" "$(ls "$T/rf/dots" | wc -l)" 1
 section "Gaming: profiles + run wrapper"
 "$CD" gprofile set steam:200 nice=5 >/dev/null 2>&1;            eq "nice out of range refused" "$?" 2
 "$CD" gprofile set steam:200 'env=BAD-NAME=1' >/dev/null 2>&1;  eq "bad env name refused" "$?" 2

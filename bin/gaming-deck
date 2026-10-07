@@ -645,8 +645,8 @@ gaming_import() {
     n="$(jq --argjson here "$(profiles_json)" '[.gaming.profiles | keys[] | select($here[.] == null)] | length' "$file")"
     # the backup's profiles, then this PC's on top: nothing here is overwritten
     jq -n --argjson a "$(profiles_json)" --slurpfile b "$file" '($b[0].gaming.profiles // {}) + $a' > "$tmp"
-    mv "$tmp" "$PROFILES"
-    jq -n --argjson a "$(fx_links_json)" --slurpfile b "$file" '($b[0].gaming.links // {}) + $a' > "$tmp" && mv "$tmp" "$FX_LINKS"
+    replace_file "$tmp" "$PROFILES"
+    jq -n --argjson a "$(fx_links_json)" --slurpfile b "$file" '($b[0].gaming.links // {}) + $a' > "$tmp" && replace_file "$tmp" "$FX_LINKS"; rm -f "$tmp"
     [[ -f "$FX_SETTINGS" ]] || jq '.gaming.fx // {}' "$file" > "$FX_SETTINGS"
     [[ -f "$SCHED_SETTINGS" ]] || jq '.gaming.sched // {}' "$file" > "$SCHED_SETTINGS"
     while IFS= read -r id; do
@@ -759,7 +759,7 @@ vdf_set() {
         }
         { print }' "$file" > "$tmp" || { rm -f "$sets" "$tmp"; return 1; }
     rm -f "$sets"
-    cat "$tmp" > "$file"; rm -f "$tmp"
+    replace_file "$tmp" "$file"; rm -f "$tmp"
 }
 
 # vdf_del <file> <block path> [key]  — remove a key, or the whole block
@@ -780,7 +780,7 @@ vdf_del() {
             k = substr($0, RSTART, RLENGTH); gsub(/^[ \t]*"|"$/, "", k)
             if (tolower(k) == tolower(K)) next
         }
-        { print }' "$file" > "$tmp" && cat "$tmp" > "$file"
+        { print }' "$file" > "$tmp" && replace_file "$tmp" "$file"
     rm -f "$tmp"
 }
 
@@ -848,10 +848,10 @@ profile_get() {
 
 profile_write() {   # profile_write <key> <json object to merge>; "null" deletes it
     mkdir -p "$GAMING_DIR"
-    local tmp; tmp="$(mktemp)"
+    local tmp; tmp="$(mktemp "$PROFILES.XXXXXX")"
     profiles_json | jq --arg k "$1" --argjson p "$2" \
         'if $p == null then del(.[$k]) else .[$k] = ((.[$k] // {}) + $p) end' > "$tmp" \
-        && mv "$tmp" "$PROFILES"
+        && mv "$tmp" "$PROFILES" || { rm -f "$tmp"; return 1; }
 }
 
 valid_game_key() { [[ "$1" =~ ^(default|steam:[0-9]+|[a-z]+:[A-Za-z0-9._:-]+)$ ]]; }
@@ -2984,7 +2984,7 @@ panel_key() {   # KEY | off
             printf '# %s\nbind = %s, %s, exec, %s panel\n# %s\n' "$PANEL_MARK_BEGIN" "$mods" "$k" "$bin" "$PANEL_MARK_END" >> "$tmp"
         fi
     fi
-    cat "$tmp" > "$conf"; rm -f "$tmp"
+    replace_file "$tmp" "$conf"; rm -f "$tmp"
     panel_setting_set key "$(jq -n --arg k "$key" '$k')"
     if [[ "$key" == off ]]; then log "✔ In-game panel key removed from ${conf/#$HOME/\~}."
     else log "✔ In-game panel on $key (${conf/#$HOME/\~}; Hyprland reloads it by itself)."; fi
@@ -3890,6 +3890,16 @@ cmd_fx_exes() {
 }
 
 winpath() { local p="$1"; printf 'Z:%s' "${p//\//\\}"; }
+# replace_file <new content> <target>: an atomic swap (a temp file beside the real target, then
+# rename), so a game, Steam or Hyprland reading it never sees half a file. A symlinked target
+# (dotfiles) stays a symlink and keeps its mode. /tmp is another filesystem: mv from there copies.
+replace_file() {
+    local src="$1" real t
+    real="$(readlink -f -- "$2" 2>/dev/null)"; [[ -n "$real" ]] || real="$2"
+    t="$(mktemp "$real.XXXXXX")" || return 1
+    if cat -- "$src" > "$t" && { [[ ! -e "$real" ]] || chmod --reference="$real" "$t" 2>/dev/null || true; } && mv -f -- "$t" "$real"; then return 0; fi
+    rm -f -- "$t"; return 1
+}
 
 # set/replace one key of an ini section in place (ReShade.ini)
 ini_set() {   # file section key value
@@ -3902,7 +3912,7 @@ ini_set() {   # file section key value
         /^\[/ { if (insec && !done) { print K "=" V; done = 1 } insec = 0 }
         insec && index($0, K "=") == 1 { if (!done) print K "=" V; done = 1; next }
         { print }
-        END { if (!done) { if (!insec) print S; print K "=" V } }' "$1" > "$tmp" && cat "$tmp" > "$1"; rm -f "$tmp"
+        END { if (!done) { if (!insec) print S; print K "=" V } }' "$1" > "$tmp" && replace_file "$tmp" "$1"; rm -f "$tmp"
 }
 
 # does the game launch through the wrapper? (Steam launch options)
@@ -4398,7 +4408,7 @@ cmd_fx_link() {
             if [[ -z "$label" && "$url" =~ nexusmods\.com/([a-z0-9]+)/mods/([0-9]+) ]]; then label="Nexus #${BASH_REMATCH[2]}"; fi
             mkdir -p "$GAMING_DIR"; tmp="$(mktemp)"
             fx_links_json | jq --arg k "$key" --arg u "$url" --arg l "${label:-$url}" \
-                '.[$k] = ((.[$k] // []) | map(select(.url != $u)) + [{url:$u, label:$l}])' > "$tmp" && mv "$tmp" "$FX_LINKS"
+                '.[$k] = ((.[$k] // []) | map(select(.url != $u)) + [{url:$u, label:$l}])' > "$tmp" && replace_file "$tmp" "$FX_LINKS"; rm -f "$tmp"
             log "✔ Saved for $(game_label "$key"): ${label:-$url}" ;;
         note)
             [[ -n "$url" ]] || { err "use: fx link note <key> <url> <text>"; return 2; }
@@ -4406,12 +4416,12 @@ cmd_fx_link() {
                 || { err "that link isn't saved for $key"; return 2; }
             mkdir -p "$GAMING_DIR"; tmp="$(mktemp)"
             fx_links_json | jq --arg k "$key" --arg u "$url" --arg n "$label" \
-                '.[$k] |= map(if .url == $u then .notes = $n else . end)' > "$tmp" && mv "$tmp" "$FX_LINKS"
+                '.[$k] |= map(if .url == $u then .notes = $n else . end)' > "$tmp" && replace_file "$tmp" "$FX_LINKS"; rm -f "$tmp"
             log "✔ Notes saved." ;;
         rm)
             mkdir -p "$GAMING_DIR"; tmp="$(mktemp)"
             fx_links_json | jq --arg k "$key" --arg u "$url" '.[$k] = ((.[$k] // []) | map(select(.url != $u))) | with_entries(select(.value | length > 0))' \
-                > "$tmp" && mv "$tmp" "$FX_LINKS"
+                > "$tmp" && replace_file "$tmp" "$FX_LINKS"; rm -f "$tmp"
             log "✔ Removed." ;;
         *) err "use: fx link add|rm|get steam:<appid> …"; return 2 ;;
     esac
@@ -5051,7 +5061,7 @@ cmd_gaudit_fix() {
         elif [[ "$drop" != "[]" ]]; then
             local tmp; tmp="$(mktemp)"
             profiles_json | jq --arg k "$k" --argjson d "$drop" '.[$k].env |= (. // {} | with_entries(select(.key as $x | $d | index($x) | not)))' > "$tmp" \
-                && mv "$tmp" "$PROFILES"
+                && replace_file "$tmp" "$PROFILES"; rm -f "$tmp"
             log "→ $(game_label "$k"): removed $(jq -r 'join(", ")' <<<"$drop") (no effect on this $(jq -r .vendor <<<"$a") GPU)"; n=$((n + 1))
         fi
         if jq -e --arg k "$k" 'any(.issues[]; .key == $k and .kind == "reshade")' <<<"$a" >/dev/null; then
