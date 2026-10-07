@@ -921,7 +921,7 @@ cmd_run() {
         tail -n 2000 "$rlog" > "$rlog.cut" && replace_file "$rlog.cut" "$rlog"; rm -f "$rlog.cut"
     fi
     printf '%s  %s  %s\n' "$(date '+%F %T')" "$key" "$*" >> "$rlog"
-    p="$(bench_overlay "$key" "$p")"
+    p="$(bench_overlay "$key" "$p" "$*")"
     # (runs in a subshell above, so the benchmark's MangoHud logging is exported here)
     local mhc; mhc="$(jq -r '.mangohudConfig // empty' <<<"$p")"
     [[ -n "$mhc" ]] && export MANGOHUD_CONFIG="$mhc"
@@ -1886,6 +1886,10 @@ bench_log() {
 bench_get() {
     local key="$1" a b
     a="$(bench_stats "$(bench_log "$key" A)")"; b="$(bench_stats "$(bench_log "$key" B)")"
+    # each run's settings as they were when it ran
+    local d; d="$(bench_path "$key")"
+    [[ "$a" != null && -s "$d/A/used.json" ]] && a="$(jq -c --slurpfile u "$d/A/used.json" '. + {used:$u[0]}' <<<"$a")"
+    [[ "$b" != null && -s "$d/B/used.json" ]] && b="$(jq -c --slurpfile u "$d/B/used.json" '. + {used:$u[0]}' <<<"$b")"
     bench_cfg "$key" | jq -c --argjson a "$a" --argjson b "$b" '. + {results:{A:$a, B:$b}}
         | if $a != null and $b != null then .compare = {
             avgFps:((($b.avgFps - $a.avgFps) / $a.avgFps * 1000 | round) / 10),
@@ -1896,8 +1900,8 @@ bench_get() {
 # cmd_run hook: if a benchmark launch is armed for this game, overlay the
 # variant on the profile, force MangoHud logging into the variant's folder,
 # and disarm (a normal launch afterwards is untouched)
-bench_overlay() {   # key profile-json → profile-json (+ .mangohudConfig for the wrapper to export)
-    local key="$1" p="$2" akey variant when cfg dir
+bench_overlay() {   # key profile-json [launch command] → profile-json (+ .mangohudConfig for the wrapper to export)
+    local key="$1" p="$2" cmdline="${3:-}" akey variant when cfg dir out
     [[ -f "$BENCH_ARMED" ]] || { echo "$p"; return; }
     IFS=$'\t' read -r akey variant when < "$BENCH_ARMED"
     if [[ "$akey" != "$key" ]] || (( $(date +%s) - ${when:-0} > 1800 )); then echo "$p"; return; fi
@@ -1907,12 +1911,20 @@ bench_overlay() {   # key profile-json → profile-json (+ .mangohudConfig for t
     local mhc
     mhc="output_folder=$dir,autostart_log=$(jq -r '.delay' <<<"$cfg"),log_duration=$(jq -r '.duration' <<<"$cfg"),log_interval=0"
     echo "  benchmark $variant armed → $dir" >> "$STATE_DIR/logs/run.log"
-    jq -c --arg mhc "$mhc" --argjson v "$(jq -c --arg x "$variant" '.[$x] // {}' <<<"$cfg")" '
+    out="$(jq -c --arg mhc "$mhc" --argjson v "$(jq -c --arg x "$variant" '.[$x] // {}' <<<"$cfg")" '
         . + {mangohud:true, mangohudConfig:$mhc}
         + (if ($v.gamemode // "") != "" then {gamemode:($v.gamemode == "true")} else {} end)
         + (if ($v.args // "") != "" then {args:$v.args} else {} end)
         + (if ($v.prefix // "") != "" then {prefix:$v.prefix} else {} end)
-        + {env:(.env + ($v.env // "" | split(" ") | map(select(test("^[A-Za-z_][A-Za-z0-9_]*=")) | {key:split("=")[0], value:(split("=")[1:] | join("="))}) | from_entries))}' <<<"$p"
+        + {env:(.env + ($v.env // "" | split(" ") | map(select(test("^[A-Za-z_][A-Za-z0-9_]*=")) | {key:split("=")[0], value:(split("=")[1:] | join("="))}) | from_entries))}' <<<"$p")"
+    # what this run really used (the A/B cards can change later): shown beside its results
+    local rep; rep="$(fx_key_dir "$key")/report.json"
+    jq -c --arg cmd "$cmdline" --arg label "$(jq -r --arg x "$variant" '.[$x].label // $x' <<<"$cfg")" \
+          --argjson look "$(if [[ -s "$rep" ]]; then jq -c '{name, mode}' "$rep"; else echo null; fi)" '
+        {label:$label, at:(now | floor), env, args:(.args // ""), prefix:(.prefix // ""), gamemode:(.gamemode == true),
+         proton:(($cmd | capture("(?<p>[^/]+)/proton (waitforexitandrun|run) ") | .p) // ""),
+         fx:(if .fx == true and $look != null then $look else null end)}' <<<"$out" > "$dir/used.json"
+    printf '%s\n' "$out"
 }
 
 # bench get|set|run|restore|clear <key> …

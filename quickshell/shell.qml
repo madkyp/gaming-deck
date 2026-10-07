@@ -2019,6 +2019,8 @@ ShellRoot {
                             RowLayout {
                                 anchors.fill: parent; anchors.margins: 10; spacing: 12
                                 visible: !!win.bench.results && (!!win.bench.results.A || !!win.bench.results.B)
+                                ColumnLayout {
+                                Layout.alignment: Qt.AlignTop; Layout.maximumWidth: 420; spacing: 10
                                 GridLayout {
                                     columns: 4; rowSpacing: 4; columnSpacing: 12
                                     Layout.alignment: Qt.AlignTop
@@ -2054,6 +2056,32 @@ ShellRoot {
                                         }
                                     }
                                 }
+                                // what each run used, recorded when it ran (the cards above may have changed since)
+                                Repeater {
+                                    model: ["A", "B"]
+                                    delegate: ColumnLayout {
+                                        required property var modelData
+                                        property var u: ((win.bench.results || {})[modelData] || {}).used || null
+                                        visible: !!((win.bench.results || {})[modelData])
+                                        Layout.fillWidth: true; spacing: 2
+                                        Text {
+                                            text: modelData + " · " + (u ? u.label : (((win.bench[modelData] || {}).label) || modelData))
+                                                  + (u ? "  ·  " + new Date(u.at * 1000).toLocaleString(Qt.locale(win.lang === "es" ? "es_ES" : "en_GB"), "dd/MM HH:mm") : "")
+                                            color: modelData === "A" ? pal.accent : pal.pink; font.family: win.mono; font.pixelSize: 10; font.bold: true
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true; wrapMode: Text.WrapAnywhere
+                                            color: pal.dim; font.family: win.mono; font.pixelSize: 9
+                                            text: !u ? win.t("settings not recorded (run made before this version)")
+                                                  : "PROTON " + (u.proton || win.t("Steam default"))
+                                                    + "  ·  GAMEMODE " + (u.gamemode ? win.t("on") : win.t("off"))
+                                                    + "  ·  FX " + (u.fx ? u.fx.name + " (" + u.fx.mode + ")" : win.t("off"))
+                                                    + "\n" + win.t("variables: ") + (Object.keys(u.env || {}).map(function (k) { return k + "=" + u.env[k]; }).join(" ") || "—")
+                                                    + "\n" + win.t("arguments: ") + (u.args || "—") + (u.prefix ? "  ·  PREFIX " + u.prefix : "")
+                                        }
+                                    }
+                                }
+                                }
                                 // frametime curves (worst frame per bucket)
                                 Canvas {
                                     id: benchChart
@@ -2064,24 +2092,49 @@ ShellRoot {
                                         var ctx = getContext("2d"); ctx.clearRect(0, 0, width, height);
                                         var r = win.bench.results || {}, a = r.A ? r.A.series : [], b = r.B ? r.B.series : [];
                                         var p99 = Math.max(r.A ? r.A.p99ms : 0, r.B ? r.B.p99ms : 0);
-                                        var ymax = Math.max(p99 * 1.6, 5);
+                                        var ymax = Math.max(p99 * 1.3, 5);
+                                        var top = 18;   // room for the legend and the spike marks
+                                        // the axis starts just under the fastest frame: no empty band below the curves
+                                        var lo = Math.min.apply(null, a.concat(b).filter(function (v) { return v > 0 && v <= ymax; }).concat([ymax]));
+                                        var ymin = Math.max(0, Math.floor(lo * 0.85));
+                                        function yOf(v) { return height - (v - ymin) / (ymax - ymin) * (height - top - 12); }
                                         ctx.strokeStyle = "#2a2740"; ctx.lineWidth = 1;
-                                        [16.7, 33.3].forEach(function (ms) {
-                                            if (ms > ymax) return;
-                                            var y = height - ms / ymax * height;
+                                        [8.3, 16.7, 33.3].forEach(function (ms) {
+                                            if (ms > ymax || ms < ymin) return;
+                                            var y = yOf(ms);
                                             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
                                             ctx.fillStyle = "#6a6580"; ctx.font = "9px monospace"; ctx.fillText(ms + " ms", 2, y - 2);
                                         });
-                                        function line(sr, col) {
+                                        // a stutter past the scale is a dot on the top edge, not a line hiding both curves
+                                        function line(sr, col, row) {
                                             if (!sr || sr.length < 2) return;
+                                            var h = height - top;
                                             ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.beginPath();
+                                            var last = null;
                                             for (var i = 0; i < sr.length; i++) {
-                                                var x = i / (sr.length - 1) * width, y = height - Math.min(sr[i], ymax) / ymax * height;
+                                                // the curve carries on at the last normal value through a stutter
+                                                var v = sr[i] > ymax ? (last === null ? ymax : last) : sr[i]; last = v;
+                                                var x = i / (sr.length - 1) * width, y = yOf(v);
                                                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                                             }
                                             ctx.stroke();
+                                            ctx.fillStyle = col;
+                                            for (var j = 0; j < sr.length; j++) if (sr[j] > ymax) {
+                                                ctx.beginPath(); ctx.arc(j / (sr.length - 1) * width, top - 3 - row * 5, 2, 0, 2 * Math.PI); ctx.fill();
+                                            }
                                         }
-                                        line(a, "#b9a3e3"); line(b, "#d9a7d0");
+                                        line(a, String(pal.accent), 0); line(b, String(pal.pink), 1);
+                                        // legend
+                                        ctx.font = "9px monospace"; var lx = width - 4;
+                                        [[r.B ? ((win.bench.B || {}).label || "B") : "", String(pal.pink)], [r.A ? ((win.bench.A || {}).label || "A") : "", String(pal.accent)]].forEach(function (l) {
+                                            if (!l[0]) return;
+                                            var w = ctx.measureText(l[0]).width; lx -= w; ctx.fillStyle = l[1]; ctx.fillText(l[0], lx, 9);
+                                            lx -= 16; ctx.fillRect(lx, 5, 12, 2); lx -= 12;
+                                        });
+                                        ctx.fillStyle = "#6a6580";
+                                        ctx.fillText(Math.round(ymax) + " ms", 2, top + 8); ctx.fillText(ymin + " ms", 2, height - 3);
+                                        var note = win.t("● = stutter beyond the scale");
+                                        ctx.fillText(note, width - ctx.measureText(note).width - 2, height - 3);
                                     }
                                 }
                             }

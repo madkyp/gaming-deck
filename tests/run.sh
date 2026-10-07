@@ -469,6 +469,8 @@ O="$(SteamAppId=100 "$CD" run "$T/fake/bgame")"
 has "armed launch logs frames into the variant folder" "$O" "output_folder=$HOME/.local/share/gaming-deck/gaming/bench/steam_100/B,autostart_log=10,log_duration=30"
 has "variant env applied" "$O" "W=1"
 has "variant args applied" "$O" "args=-vulkan"
+eq "the run records what it really used (label, env, args; no Proton for a native game)" \
+   "$(jq -c '[.label, .env.PROTON_ENABLE_WAYLAND, .args, .proton]' "$HOME/.local/share/gaming-deck/gaming/bench/steam_100/B/used.json")" '["wayland","1","-vulkan",""]'
 O="$(SteamAppId=100 "$CD" run "$T/fake/bgame")"
 hasnt "armed only once: the next launch is normal" "$O" "output_folder="
 mapfile -t fts < <(for i in $(seq 100); do echo 20; done)
