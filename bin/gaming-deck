@@ -616,12 +616,12 @@ cmd_clean() {
 # ===========================================================================
 # a game's MY LOOKS for a backup: [{slug, meta, preset}]
 fx_my_looks_json() {   # fx game dir
-    local l out=()
+    local l rows=()
     for l in "$1"looks/*/; do
         [[ -s "$l/look.json" && -s "$l/preset.ini" ]] || continue
-        out+=("$(jq -c --arg slug "$(basename "$l")" --rawfile preset "$l/preset.ini" '{slug:$slug, meta:., preset:$preset}' "$l/look.json")")
+        rows+=("$(jq -c --arg slug "$(basename "$l")" --rawfile preset "$l/preset.ini" '{slug:$slug, meta:., preset:$preset}' "$l/look.json")")
     done
-    if ((${#out[@]})); then printf '%s\n' "${out[@]}" | jq -sc .; else echo '[]'; fi
+    if ((${#rows[@]})); then printf '%s\n' "${rows[@]}" | jq -sc .; else echo '[]'; fi
 }
 # the shaders imports brought (Shaders/imported), so restored looks have them: tar.gz in base64
 # (through a file: in base64 it's far over the size one command argument may have)
