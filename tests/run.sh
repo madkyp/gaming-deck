@@ -1172,6 +1172,24 @@ eq "fix drops only what does nothing on this GPU" "$("$CD" gprofile get steam:60
 "$CD" gaming-import "$BK" >/dev/null 2>&1
 eq "import adds what's missing here" "$("$CD" gprofile get steam:600 | jq -r '.env.__GL_SHADER_DISK_CACHE_SIZE')" 1000
 eq "…and keeps what's already here" "$("$CD" gprofile get steam:601 | jq -r '.env.A')" 1
+# MY LOOKS and the imports' shaders travel in the backup
+FXP="$HOME/.local/share/gaming-deck/gaming/fx"; ISH="$HOME/.local/share/gaming-deck/reshade/Shaders/imported"
+mkdir -p "$FXP/steam_777/looks/file-abc123" "$ISH/SomePack/Include"
+echo '{"slug":"file-abc123","name":"Kept look","source":"file","effects":2,"usedAt":1}' > "$FXP/steam_777/looks/file-abc123/look.json"
+printf 'Techniques=Vibrance@Vibrance.fx\n' > "$FXP/steam_777/looks/file-abc123/preset.ini"
+echo 'technique Pack { pass { } }' > "$ISH/SomePack/Pack.fx"; echo '// x' > "$ISH/SomePack/Include/Lib.fxh"
+"$CD" export "$T/bk-looks.json" >/dev/null 2>&1
+eq "backup carries MY LOOKS" "$(jq -r '.gaming.looks[] | select(.id == "steam_777") | .myLooks[0].meta.name' "$T/bk-looks.json")" "Kept look"
+eq "…and the imports' shaders" "$(jq -r '.gaming.importedShaders.data' "$T/bk-looks.json" | base64 -d | tar -tzf - | grep -c '^imported/SomePack/.*\.fx')" 2
+rm -rf "$FXP/steam_777" "$ISH/SomePack"
+"$CD" gaming-import "$T/bk-looks.json" >/dev/null 2>&1
+eq "restore puts MY LOOKS back" "$("$CD" fx looks steam:777 | jq -c 'map(.name)')" '["Kept look"]'
+yes "…and the shaders, folders kept" "[[ -f '$ISH/SomePack/Pack.fx' && -f '$ISH/SomePack/Include/Lib.fxh' ]]"
+mkdir -p "$T/evil/imported"; echo bad > "$T/evil/outside.fx"; echo ok > "$T/evil/imported/fine.fx"
+( cd "$T/evil" && tar -czf "$T/evil.tgz" imported/fine.fx outside.fx )
+jq --arg d "$(base64 -w0 "$T/evil.tgz")" '.gaming.importedShaders.data = $d' "$T/bk-looks.json" > "$T/bk-evil.json"
+"$CD" gaming-import "$T/bk-evil.json" >/dev/null 2>&1
+yes "a backup whose shaders reach outside imported/ isn't unpacked at all" "[[ ! -e '$HOME/.local/share/gaming-deck/reshade/Shaders/outside.fx' && ! -e '$ISH/fine.fx' ]]"
 "$CD" gprofile reset steam:600 >/dev/null
 jq '.app = "control-deck"' "$BK" > "$T/bk-cd.json"
 "$CD" gaming-import "$T/bk-cd.json" >/dev/null 2>&1; eq "a Control Deck backup imports too" "$?" 0

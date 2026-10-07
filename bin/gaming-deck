@@ -614,26 +614,51 @@ cmd_clean() {
 # ===========================================================================
 # Backup: export / restore the set of installed apps
 # ===========================================================================
+# a game's MY LOOKS for a backup: [{slug, meta, preset}]
+fx_my_looks_json() {   # fx game dir
+    local l out=()
+    for l in "$1"looks/*/; do
+        [[ -s "$l/look.json" && -s "$l/preset.ini" ]] || continue
+        out+=("$(jq -c --arg slug "$(basename "$l")" --rawfile preset "$l/preset.ini" '{slug:$slug, meta:., preset:$preset}' "$l/look.json")")
+    done
+    if ((${#out[@]})); then printf '%s\n' "${out[@]}" | jq -sc .; else echo '[]'; fi
+}
+# the shaders imports brought (Shaders/imported), so restored looks have them: tar.gz in base64
+# (through a file: in base64 it's far over the size one command argument may have)
+fx_imported_shaders_json() {
+    local d="$FX_DIR/Shaders/imported" b
+    [[ -d "$d" ]] && [[ -n "$(find "$d" -type f -print -quit 2>/dev/null)" ]] || { echo null; return; }
+    b="$(mktemp)"; tar -C "$FX_DIR/Shaders" -czf - imported | base64 -w0 > "$b"
+    jq -nc --rawfile data "$b" --argjson n "$(find "$d" -type f | wc -l)" '{format:"tar.gz+base64", files:$n, data:$data}'
+    rm -f "$b"
+}
+
 cmd_export() {
-    local out="${1:-$HOME/gaming-deck-backup-$(date +%F).json}"
-    # profiles, shader looks (small files), saved preset pages, keys, scheduler
-    local gaming; gaming="$(jq -n --argjson prof "$(profiles_json)" \
+    local out="${1:-$HOME/gaming-deck-backup-$(date +%F).json}" lf gf d
+    # profiles, shader looks (small files), MY LOOKS, the imports' shaders, saved preset pages, keys,
+    # scheduler. The big parts go through files: a command argument can't hold more than ~128 KB.
+    lf="$(mktemp)"; gf="$(mktemp)"
+    for d in "$FX_PROFILES"/*/; do
+        [[ -d "$d" ]] || continue
+        jq -nc --arg id "$(basename "$d")" \
+            --arg report "$(cat "$d/report.json" 2>/dev/null)" --arg preset "$(cat "$d/preset.ini" 2>/dev/null)" \
+            --arg rs "$(cat "$d/ReShadePreset.ini" 2>/dev/null)" --arg vkb "$(cat "$d/vkBasalt.conf" 2>/dev/null)" \
+            --slurpfile mine <(fx_my_looks_json "$d") \
+            '{id:$id, report:$report, preset:$preset, reshadePreset:$rs, vkbasalt:$vkb, myLooks:$mine[0]}'
+    done > "$lf"
+    jq -nc --argjson prof "$(profiles_json)" \
         --argjson links "$(fx_links_json)" \
         --argjson fxs "$(cat "$FX_SETTINGS" 2>/dev/null || echo '{}')" \
         --argjson sched "$(cat "$SCHED_SETTINGS" 2>/dev/null || echo '{}')" \
-        --argjson looks "$(for d in "$FX_PROFILES"/*/; do
-                [[ -d "$d" ]] || continue
-                jq -n --arg id "$(basename "$d")" \
-                    --arg report "$(cat "$d/report.json" 2>/dev/null)" --arg preset "$(cat "$d/preset.ini" 2>/dev/null)" \
-                    --arg rs "$(cat "$d/ReShadePreset.ini" 2>/dev/null)" --arg vkb "$(cat "$d/vkBasalt.conf" 2>/dev/null)" \
-                    '{id:$id, report:$report, preset:$preset, reshadePreset:$rs, vkbasalt:$vkb}'
-            done | jq -s .)" \
-        '{profiles:$prof, links:$links, fx:$fxs, sched:$sched, looks:$looks}')"
-    jq -n --arg date "$(date -Is)" --arg host "$(uname -n)" --argjson gaming "$gaming" \
-        '{app:"gaming-deck", version:1, date:$date, host:$host, gaming:$gaming}' > "$out" \
-        || { err "could not write $out"; return 4; }
+        --slurpfile looks "$lf" --slurpfile shaders <(fx_imported_shaders_json) \
+        '{profiles:$prof, links:$links, fx:$fxs, sched:$sched, looks:$looks}
+         + (if $shaders[0] != null then {importedShaders:$shaders[0]} else {} end)' > "$gf"
+    jq -n --arg date "$(date -Is)" --arg host "$(uname -n)" --slurpfile gaming "$gf" \
+        '{app:"gaming-deck", version:1, date:$date, host:$host, gaming:$gaming[0]}' > "$out" \
+        || { rm -f "$lf" "$gf"; err "could not write $out"; return 4; }
+    rm -f "$lf" "$gf"
     log "✔ Backup saved to $out"
-    log "  $(jq -r '"\(.gaming.profiles | length) game profile(s) · \(.gaming.looks | length) look(s) · \(.gaming.links | length) game(s) with saved preset pages"' "$out")"
+    log "  $(jq -r '"\(.gaming.profiles | length) game profile(s) · \(.gaming.looks | length) look(s) on · \([.gaming.looks[].myLooks // [] | length] | add // 0) in MY LOOKS · \(.gaming.links | length) game(s) with saved preset pages" + (if .gaming.importedShaders then " · imported shaders (\(.gaming.importedShaders.files) files)" else "" end)' "$out")"
     history_add export backup "$(basename "$out")" 0
 }
 
@@ -661,6 +686,27 @@ gaming_import() {
             [[ -n "$f" ]] && printf '%s\n' "$f" > "$d/${k#*:}"
         done
     done < <(jq -r '.gaming.looks[]?.id' "$file")
+    # MY LOOKS: the ones this PC doesn't have yet join each game's list (even a game already set up here)
+    local nl=0 slug l
+    while IFS=$'\t' read -r id slug; do
+        [[ "$id" =~ ^[A-Za-z0-9._:-]+$ && "$slug" =~ ^(sfx|file)-[A-Za-z0-9]+$ ]] || continue
+        l="$FX_PROFILES/$id/looks/$slug"; [[ -e "$l" ]] && continue
+        mkdir -p "$l"
+        jq -c --arg i "$id" --arg s "$slug" '.gaming.looks[] | select(.id == $i) | .myLooks[]? | select(.slug == $s) | .meta' "$file" > "$l/look.json"
+        jq -r --arg i "$id" --arg s "$slug" '.gaming.looks[] | select(.id == $i) | .myLooks[]? | select(.slug == $s) | .preset' "$file" > "$l/preset.ini"
+        nl=$((nl + 1))
+    done < <(jq -r '.gaming.looks[]? | .id as $i | .myLooks[]? | [$i, .slug] | @tsv' "$file")
+    # the imports' shaders: only files under imported/ (never a path outside), never over one already here
+    if jq -e '.gaming.importedShaders.format == "tar.gz+base64"' "$file" >/dev/null 2>&1; then
+        local tgz; tgz="$(mktemp)"
+        if jq -r '.gaming.importedShaders.data' "$file" | base64 -d > "$tgz" 2>/dev/null \
+           && tar -tzf "$tgz" 2>/dev/null | awk '!/^imported(\/|$)/ || /(^|\/)\.\.(\/|$)/ { bad = 1 } END { exit bad }'; then
+            mkdir -p "$FX_DIR/Shaders" && tar -C "$FX_DIR/Shaders" -xzf "$tgz" --skip-old-files 2>/dev/null \
+                && log "→ Shaders the imports brought: restored (Shaders/imported)"
+        else log "✗ the backup's imported shaders were not restored (damaged, or paths outside imported/)"; fi
+        rm -f "$tgz"
+    fi
+    ((nl)) && log "→ MY LOOKS: $nl look(s) added"
     log "→ Gaming: $n game profile(s) added (the ones already here were kept)"
     local issues; issues="$(cmd_gaudit | jq '.issues | length')"
     (( issues > 0 )) && log "  $issues thing(s) to adjust for this PC: GAMING → LIBRARY → CHECK FOR THIS PC"
