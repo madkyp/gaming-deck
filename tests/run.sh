@@ -1476,8 +1476,8 @@ eq "Fextralife for a souls-like, with its search" "$(fn cmd_guides 1245620 | jq 
    "https://eldenring.wiki.fextralife.com/Special:Search?search="
 eq "…none for other games" "$("$CD" guides 700 | jq '[.[] | select(.label == "Fextralife")] | length')" 0
 mv "$HOME/.local/share/gaming-deck/ui.json" "$T/ui.json.keep"
-eq "language: a game's LC_ALL=C doesn't hide the system's Spanish" "$(LC_ALL=C LC_MESSAGES= LANG=es_ES.UTF-8 "$CD" uilang)" es
-eq "…English otherwise" "$(LC_ALL=C LC_MESSAGES= LANG=en_GB.UTF-8 "$CD" uilang)" en
+eq "language: a game's LC_ALL=C doesn't hide the system's Spanish" "$(LC_ALL=C LC_MESSAGES='' LANG=es_ES.UTF-8 "$CD" uilang)" es
+eq "…English otherwise" "$(LC_ALL=C LC_MESSAGES='' LANG=en_GB.UTF-8 "$CD" uilang)" en
 mv "$T/ui.json.keep" "$HOME/.local/share/gaming-deck/ui.json"
 # the guide browser over the game
 "$CD" web open "http://x.example" >/dev/null 2>&1; eq "web: https only" "$?" 2
