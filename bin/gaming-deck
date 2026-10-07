@@ -957,6 +957,27 @@ cmd_run() {
         if [[ -n "${SteamAppId:-}" && "$SteamAppId" != 0 ]]; then key="steam:$SteamAppId"; else key=default; fi
     fi
     valid_game_key "$key" || key=default
+    # mods: a Steam game with an applied Crisol ME3 profile (FromSoftware games) starts through
+    # Mod Engine 3. Steam's own part (launch wrapper and reaper) stays in front, so Steam still
+    # tracks the game and Steam Input keeps working; only Proton + the .exe give way to ME3.
+    local me3=()
+    if [[ "$key" == steam:* ]] && have "$CRISOL"; then
+        local lcj; lcj="$(timeout 10 "$CRISOL" --launch-command "$key" 2>/dev/null)" \
+            && jq -e 'type == "array" and length > 1 and all(.[]; type == "string")' <<<"$lcj" >/dev/null 2>&1 \
+            && mapfile -t me3 < <(jq -r '.[]' <<<"$lcj")
+        ((${#me3[@]})) && [[ ! -x "${me3[0]}" ]] && me3=()
+    fi
+    if ((${#me3[@]})); then
+        local i keep=()
+        # keep "<steam-launch-wrapper> -- <reaper> SteamLaunch AppId=N --", drop what follows
+        for ((i = 1; i <= $#; i++)); do
+            if [[ "${!i}" == AppId=* ]]; then
+                local j=$((i + 1)); [[ "${!j:-}" == -- ]] && keep=("${@:1:j}"); break
+            fi
+        done
+        # only a launch by Steam (or one already going to ME3) is changed
+        if ((${#keep[@]})) || [[ "${1##*/}" == me3 ]]; then set -- "${keep[@]}" "${me3[@]}"; else me3=(); fi
+    fi
 
     local p pre=() extra=() name val
     p="$(profile_get "$key")"
@@ -967,6 +988,7 @@ cmd_run() {
         tail -n 2000 "$rlog" > "$rlog.cut" && replace_file "$rlog.cut" "$rlog"; rm -f "$rlog.cut"
     fi
     printf '%s  %s  %s\n' "$(date '+%F %T')" "$key" "$*" >> "$rlog"
+    ((${#me3[@]})) && echo "  mods: started through Mod Engine 3 (Crisol's profile)" >> "$rlog"
     p="$(bench_overlay "$key" "$p" "$*")"
     # (runs in a subshell above, so the benchmark's MangoHud logging is exported here)
     local mhc; mhc="$(jq -r '.mangohudConfig // empty' <<<"$p")"
@@ -1029,9 +1051,12 @@ cmd_run() {
     local t0 child rc rec=""
     t0="$(date +%s)"
     # Mod Engine 3 (mods of FromSoftware games, from Crisol) passes the game's own arguments after "--"
-    if ((${#extra[@]})) && [[ "${1##*/}" == me3 ]]; then
-        local a hasdd=false; for a in "$@"; do [[ "$a" == -- ]] && hasdd=true; done
-        $hasdd || extra=(-- "${extra[@]}")
+    if ((${#extra[@]})); then
+        local a seen=false hasdd=false
+        for a in "$@"; do
+            if $seen; then [[ "$a" == -- ]] && hasdd=true; elif [[ "${a##*/}" == me3 ]]; then seen=true; fi
+        done
+        $seen && ! $hasdd && extra=(-- "${extra[@]}")
     fi
     "${pre[@]}" "$@" "${extra[@]}" &
     child=$!
@@ -2224,7 +2249,8 @@ Gaming
   games                         Installed games (Steam) with profile/launch/Proton state (JSON)
   gstatus                       gamemode, CPU governor, vm.max_map_count, running games (JSON)
   gprofile get|set|reset <key>  Per-game profile: gamemode mangohud overlay ionice nice env prefix args
-  run [--profile <key>] -- cmd  Launch a game with its profile (Steam: "gaming-deck run %command%")
+  run [--profile <key>] -- cmd  Launch a game with its profile (Steam: "gaming-deck run %command%").
+                                Steam games with a Crisol ME3 profile start through ME3 (crisol --launch-command)
   steamwrap <appid> on|off      Launch a Steam game through Gaming Deck (Steam must be closed)
   compattools                   Proton versions Steam can use (JSON)
   steamcompat <appid> <tool|default>   Proton version for a game (Steam must be closed)

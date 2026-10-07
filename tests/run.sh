@@ -18,6 +18,7 @@ export GAMING_DECK_WEB_PID="$T/web.pid"   # never the real guide browser
 export GAMING_DECK_WEB_HELPER="$T/no-web-helper"   # …nor ever started (guides go to the xdg-open stub)
 export GAMING_DECK_PANEL_QML="$T/no-panel.qml"   # never a real panel (install.sh puts one in the test $HOME)
 export GAMING_DECK_FX_EXTRA_PACKAGES="$T/fx-extra.json"; echo "[]" > "$T/fx-extra.json"   # community packs: none unless a test adds one
+export GAMING_DECK_CRISOL="$T/bin/crisol"   # the test stub (or none yet), never this PC's Crisol
 # Nexus's list of games: a local one (never the network)
 export GAMING_DECK_NEXUS_GAMES_URL="file://$T/nexus-games.json"
 echo '[{"name":"Elden Ring","domain_name":"eldenring"},{"name":"Lords of the Fallen","domain_name":"lordsofthefallen"},{"name":"Lords of the Fallen (2023)","domain_name":"lordsofthefallen2023"},{"name":"Hogwarts Legacy","domain_name":"hogwartslegacy"}]' > "$T/nexus-games.json"
@@ -617,6 +618,21 @@ stub umbral 'exit 2'
 "$CD" uopts umbral:1484d426be >/dev/null 2>&1; eq "older Umbral (no --get) → 4, the GUI stays read-only" "$?" 4
 # Crisol (mod manager): a game's mods, open it there, play with mods
 eq "mods without Crisol → {}" "$(GAMING_DECK_CRISOL=crisol-missing "$CD" mods steam:100)" '{}'
+# a Steam game with an applied ME3 profile in Crisol starts through ME3 (Steam's wrapper and reaper stay)
+mkdir -p "$T/me3s"; printf '#!/bin/sh\necho "$(basename "$0") $*"\n' > "$T/me3s/me3"; cp "$T/me3s/me3" "$T/me3s/slw"; chmod +x "$T/me3s/me3" "$T/me3s/slw"
+stub crisol '[ "$1" = --launch-command ] && [ "$2" = steam:777 ] && { echo "[\"'"$T"'/me3s/me3\",\"launch\",\"--game\",\"eldenring\",\"-p\",\"p.me3\"]"; exit 0; }; [ "$1" = --launch-command ] && exit 1; echo "crisol $*" >> "'"$T"'/crisol.log"'
+O="$(SteamAppId=777 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe)"
+eq "Steam + Crisol ME3 profile → ME3 instead of Proton, Steam's part kept" "$O" "slw -- reaper SteamLaunch AppId=777 -- $T/me3s/me3 launch --game eldenring -p p.me3"
+"$CD" gprofile set steam:777 'args=-nologos' >/dev/null
+O="$(SteamAppId=777 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe)"
+eq "…the profile's args after ME3's --" "$O" "slw -- reaper SteamLaunch AppId=777 -- $T/me3s/me3 launch --game eldenring -p p.me3 -- -nologos"
+"$CD" gprofile reset steam:777 >/dev/null
+O="$(SteamAppId=778 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=778 -- proton waitforexitandrun g.exe)"
+eq "no ME3 profile (Crisol says 1) → Steam's command as is" "$O" "slw -- reaper SteamLaunch AppId=778 -- proton waitforexitandrun g.exe"
+stub crisol 'exit 0'
+O="$(SteamAppId=777 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe)"
+eq "an older Crisol (no --launch-command: nothing printed) → as is" "$O" "slw -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe"
+has "help says it (Crisol checks for this word)" "$("$CD" help 2>&1)" "launch-command"
 stub crisol 'echo "crisol $*" >> "'"$T"'/crisol.log"
 case "$1" in
   --list) echo "[{\"key\":\"steam:100\",\"name\":\"G\",\"mods\":2,\"enabled\":1,\"profile\":\"Main\",\"applied\":true,\"pending_changes\":false,\"updates\":1,\"layout\":\"me3\",\"loader\":{\"name\":\"ME3\",\"level\":\"required\",\"installed\":true}}]" ;;
