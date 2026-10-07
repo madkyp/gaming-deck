@@ -629,6 +629,9 @@ eq "…the profile's args after ME3's --" "$O" "slw -- reaper SteamLaunch AppId=
 "$CD" gprofile reset steam:777 >/dev/null
 O="$(SteamAppId=778 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=778 -- proton waitforexitandrun g.exe)"
 eq "no ME3 profile (Crisol says 1) → Steam's command as is" "$O" "slw -- reaper SteamLaunch AppId=778 -- proton waitforexitandrun g.exe"
+stub crisol '[ -n "$LD_LIBRARY_PATH" ] && exit 1; [ "$1" = --launch-command ] && { echo "[\"'"$T"'/me3s/me3\",\"launch\"]"; exit 0; }; exit 1'
+O="$(LD_LIBRARY_PATH=/steam/runtime/libs SteamAppId=777 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe)"
+eq "Crisol is asked without Steam's runtime libraries (they break its GTK)" "$O" "slw -- reaper SteamLaunch AppId=777 -- $T/me3s/me3 launch"
 stub crisol 'exit 0'
 O="$(SteamAppId=777 "$CD" run "$T/me3s/slw" -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe)"
 eq "an older Crisol (no --launch-command: nothing printed) → as is" "$O" "slw -- reaper SteamLaunch AppId=777 -- proton waitforexitandrun er.exe"

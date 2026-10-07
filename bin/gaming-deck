@@ -962,7 +962,8 @@ cmd_run() {
     # tracks the game and Steam Input keeps working; only Proton + the .exe give way to ME3.
     local me3=()
     if [[ "$key" == steam:* ]] && have "$CRISOL"; then
-        local lcj; lcj="$(timeout 10 "$CRISOL" --launch-command "$key" 2>/dev/null)" \
+        # without Steam's runtime libraries: its old GLib breaks Crisol's GTK import (the game keeps them)
+        local lcj; lcj="$(env -u LD_LIBRARY_PATH -u LD_PRELOAD timeout 10 "$CRISOL" --launch-command "$key" 2>/dev/null)" \
             && jq -e 'type == "array" and length > 1 and all(.[]; type == "string")' <<<"$lcj" >/dev/null 2>&1 \
             && mapfile -t me3 < <(jq -r '.[]' <<<"$lcj")
         ((${#me3[@]})) && [[ ! -x "${me3[0]}" ]] && me3=()
