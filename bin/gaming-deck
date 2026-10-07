@@ -3132,13 +3132,19 @@ fx_cached() {
     local f="$FX_CACHE/$1" age="$2" url="$3" tmp
     mkdir -p "$FX_CACHE"
     if [[ -s "$f" ]] && (( $(date +%s) - $(stat -c %Y "$f") < age )); then cat "$f"; return 0; fi
-    tmp="$(mktemp)"
-    if curl -fsSL --max-time 20 -A "$FX_UA" "$url" -o "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
-        mv "$tmp" "$f"; cat "$f"
+    # offline: the stale copy, and no new wait for an hour (curl can hang up to 20 s on a dead
+    # network). With no copy at all it always tries: there is nothing else to show.
+    [[ -s "$f" ]] && ! net_retry_ok "$f" && { cat "$f"; return 0; }
+    tmp="$(mktemp "$f.XXXXXX")"
+    if curl -fsSL --connect-timeout 5 --max-time 20 -A "$FX_UA" "$url" -o "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+        mv "$tmp" "$f"; rm -f "$f.fail"; cat "$f"
     else
-        rm -f "$tmp"; [[ -s "$f" ]] && cat "$f"
+        rm -f "$tmp"; net_failed "$f"; [[ -s "$f" ]] && cat "$f"
     fi
 }
+# a download that just failed isn't tried again for an hour: <cache file>.fail marks when
+net_failed()   { : > "$1.fail" 2>/dev/null || true; }
+net_retry_ok() { [[ ! -e "$1.fail" || -n "$(find "$1.fail" -mmin +60 2>/dev/null)" ]]; }
 
 # EffectPackages.ini → JSON [{idx,name,desc,url,repo,sub,files:[…],deny:[…],default}]
 fx_packages() {
@@ -3300,12 +3306,13 @@ NEXUS_GAMES="$CACHE_HOME/gaming-deck/nexus-games.json"
 # Steam ids whose name alone picks the wrong Nexus game
 NEXUS_STEAM_DOMAINS='{"1501750":"lordsofthefallen2023"}'
 nexus_games() {
-    if [[ ! -s "$NEXUS_GAMES" || -n "$(find "$NEXUS_GAMES" -mmin +10080 2>/dev/null)" ]]; then
-        local tmp; tmp="$(mktemp)"; mkdir -p "${NEXUS_GAMES%/*}"
-        if curl -fsSL --max-time 20 -A "$FX_UA" "$NEXUS_GAMES_URL" -o "$tmp" 2>/dev/null && jq -e 'type == "array"' "$tmp" >/dev/null 2>&1; then
-            jq -c 'map({n:(.name | ascii_downcase | gsub("[^a-z0-9]"; "")), d:.domain_name})' "$tmp" > "$NEXUS_GAMES"
-        fi
-        rm -f "$tmp"
+    if [[ ! -s "$NEXUS_GAMES" ]] || { [[ -n "$(find "$NEXUS_GAMES" -mmin +10080 2>/dev/null)" ]] && net_retry_ok "$NEXUS_GAMES"; }; then
+        local tmp; mkdir -p "${NEXUS_GAMES%/*}"; tmp="$(mktemp "$NEXUS_GAMES.XXXXXX")"
+        if curl -fsSL --connect-timeout 5 --max-time 20 -A "$FX_UA" "$NEXUS_GAMES_URL" -o "$tmp" 2>/dev/null && jq -e 'type == "array"' "$tmp" >/dev/null 2>&1; then
+            jq -c 'map({n:(.name | ascii_downcase | gsub("[^a-z0-9]"; "")), d:.domain_name})' "$tmp" > "$tmp.n" && mv "$tmp.n" "$NEXUS_GAMES"
+            rm -f "$NEXUS_GAMES.fail"
+        else net_failed "$NEXUS_GAMES"; fi
+        rm -f "$tmp" "$tmp.n"
     fi
     [[ -s "$NEXUS_GAMES" ]] && cat "$NEXUS_GAMES" || echo '[]'
 }
