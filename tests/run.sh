@@ -897,6 +897,7 @@ eq "d3dcompiler_47 linked (64-bit)" "$(readlink "$W/d3dcompiler_47.dll")" "$FXB/
 has "ReShade.ini: shaders searched recursively (Windows path)" "$(cat "$W/ReShade.ini")" 'EffectSearchPaths=Z:'"${HOME//\//\\}"'\.local\share\gaming-deck\reshade\Shaders\**'
 has "…preset kept in the deck's folder" "$(cat "$W/ReShade.ini")" 'PresetPath=Z:'"${HOME//\//\\}"'\.local\share\gaming-deck\gaming\fx\steam_5000\ReShadePreset.ini'
 has "screenshots go to Pictures/ReShade/<game>" "$(cat "$W/ReShade.ini")" 'SavePath=Z:'"${HOME//\//\\}"'\Pictures\ReShade\Story Game'
+has "only the preset's effects are compiled (a quick start)" "$(cat "$W/ReShade.ini")" "SkipLoadingDisabledEffects=1"
 yes "…folder created" "[[ -d '$HOME/Pictures/ReShade/Story Game' ]]"
 printf '#!/bin/sh\necho "o=$WINEDLLOVERRIDES vkb=$ENABLE_VKBASALT"\n' > "$T/fake/rsgame"; chmod +x "$T/fake/rsgame"
 "$CD" fx set steam:5000 sfx:501 >/dev/null 2>&1 || true
@@ -1010,6 +1011,12 @@ mkdir -p "$T/nexus/onlyfx"; echo 'technique Sharp2 { pass { } }' > "$T/nexus/onl
 ( cd "$T/nexus/onlyfx" && bsdtar -a -cf "$T/nexus/onlyfx.zip" Sharp2.fx Vibrance.fx )
 eq "an archive of shaders only: no presets…" "$("$CD" fx importlist "$T/nexus/onlyfx.zip")" "[]"
 eq "…addshaders keeps the new ones and names the ones already there" "$("$CD" fx addshaders "$T/nexus/onlyfx.zip" | jq -c .)" '{"added":["Sharp2.fx"],"had":["Vibrance.fx"]}'
+mkdir -p "$T/nexus/deep/pack/reshade-shaders/Shaders/Include/Lib"
+printf '#include "Include/Lib/Common.fxh"\ntechnique Deep { pass { } }\n' > "$T/nexus/deep/pack/reshade-shaders/Shaders/DeepFX.fx"
+echo '// another pack' > "$T/nexus/deep/pack/reshade-shaders/Shaders/Include/Lib/Common.fxh"
+( cd "$T/nexus/deep" && bsdtar -a -cf "$T/nexus/deep.zip" pack )
+"$CD" fx addshaders "$T/nexus/deep.zip" >/dev/null
+yes "the folders under Shaders are kept, so relative includes still work" "[[ -f '$HOME/.local/share/gaming-deck/reshade/Shaders/imported/deep/DeepFX.fx' && -f '$HOME/.local/share/gaming-deck/reshade/Shaders/imported/deep/Include/Lib/Common.fxh' ]]"
 "$CD" fx set steam:5000 off >/dev/null
 unset GAMING_DECK_RESHADE_URL GAMING_DECK_FF_D3DC_URL GAMING_DECK_FF_D3DC_SHA64 GAMING_DECK_FF_D3DC_SHA32 \
       GAMING_DECK_STEAM_ROOT GAMING_DECK_STEAM_RUNNING GAMING_DECK_FX_PACKAGES_URL GAMING_DECK_SFX_URL GAMING_DECK_AWACY_URL GAMING_DECK_STEAM_STORE_API

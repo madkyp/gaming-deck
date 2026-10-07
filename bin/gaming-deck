@@ -961,6 +961,7 @@ cmd_run() {
             if [[ -n "$rst" ]]; then
                 api="$(jq -r .api <<<"$rst")"
                 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}d3dcompiler_47=n;$api=n,b"
+                [[ -f "$(jq -r .dir <<<"$rst")/ReShade.ini" ]] && ini_set "$(jq -r .dir <<<"$rst")/ReShade.ini" GENERAL SkipLoadingDisabledEffects 1
             else echo "  ReShade on but not installed in the game folder" >> "$rlog"; fi
         else
             local fxc; fxc="$(fx_key_dir "$key")/vkBasalt.conf"
@@ -3916,6 +3917,9 @@ cmd_reshade_on() {
     ini_set "$ini" GENERAL TextureSearchPaths "$(winpath "$FX_DIR/Textures")\\**"
     ini_set "$ini" GENERAL PresetPath "$(winpath "$d/ReShadePreset.ini")"
     ini_set "$ini" GENERAL IntermediateCachePath 'C:\users\steamuser\Temp'
+    # compile only the preset's effects, not the whole library: a much faster start, and
+    # a library shader that doesn't build (and that this preset doesn't use) stays quiet
+    ini_set "$ini" GENERAL SkipLoadingDisabledEffects 1
     reshade_set_shots "$key" "$ini"
     jq -nc --arg exe "$exe" --arg dir "$dir" --arg api "$api" --argjson arch "$arch" --argjson d3dc "$d3dc" \
         --argjson created "$created" --arg v "$(reshade_version)" \
@@ -4208,9 +4212,18 @@ fx_import_slug() { local s="${1##*/}"; s="${s%.*}"; s="${s//[^A-Za-z0-9._-]/_}";
 fx_take_shaders() {   # dir archive-file
     local d="$1" sub g added=() had=()
     sub="$FX_DIR/Shaders/imported/$(fx_import_slug "$2")"
+    # the layout under the archive's Shaders folder is kept: includes like
+    # "Include/Lib/Common.fxh" are relative to it. An effect (.fx) this install
+    # already has is skipped (two copies would clash); headers (.fxh) always come
+    # along, since another pack's "Common.fxh" is a different file.
+    local rel
     while IFS= read -r -d '' g; do
-        if [[ -n "$(fx_find "$(basename "$g")")" ]]; then had+=("$(basename "$g")"); continue; fi
-        mkdir -p "$sub"; cp -n -- "$g" "$sub/"; added+=("$(basename "$g")")
+        rel="${g#"$d"/}"
+        if [[ "${rel,,}" == */shaders/* ]]; then rel="$(sed -E 's#^(.*/)?[Ss][Hh][Aa][Dd][Ee][Rr][Ss]/##' <<<"$rel")"; else rel="${g##*/}"; fi
+        if [[ "${g,,}" == *.fx ]] && [[ -n "$(fx_find "$(basename "$g")")" ]]; then had+=("$(basename "$g")"); continue; fi
+        [[ -e "$sub/$rel" ]] && { [[ "${g,,}" == *.fx ]] && had+=("$(basename "$g")"); continue; }
+        mkdir -p "$(dirname "$sub/$rel")"; cp -n -- "$g" "$sub/$rel"
+        [[ "${g,,}" == *.fx ]] && added+=("$(basename "$g")")
     done < <(find "$d" -type f \( -iname '*.fx' -o -iname '*.fxh' \) -print0)
     while IFS= read -r -d '' g; do
         mkdir -p "$FX_DIR/Textures"; cp -n -- "$g" "$FX_DIR/Textures/"
