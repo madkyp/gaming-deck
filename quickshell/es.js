@@ -157,6 +157,7 @@ var ES = {
     "BACKUPS ↗": "COPIAS ↗",
     "BENCH": "PRUEBAS",
     "BEST": "MEJORES",
+    "BUSY — WAIT FOR THE CURRENT ACTION": "OCUPADO: ESPERA A QUE TERMINE LA ACCIÓN EN CURSO",
     "Back to the kernel's scheduler (asks for your password)": "Vuelve al planificador del kernel (pide tu contraseña)",
     "Battle.net client": "Cliente de Battle.net",
     "Battle.net game": "Juego de Battle.net",

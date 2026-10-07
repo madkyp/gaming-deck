@@ -391,7 +391,12 @@ ShellRoot {
         function envString(e) {
             return Object.keys(e || {}).map(function (k) { return k + "=" + e[k]; }).join(" ");
         }
-        function runGame(args, label) { gameArgs = args; gameLog = ""; gameStatus = label; confirmShader = ""; gameProc.running = true; }
+        function runGame(args, label) {
+            // one action at a time: starting another would leave it undone and read the first one's result as its own
+            if (gameProc.running) { gameStatus = "BUSY — WAIT FOR THE CURRENT ACTION"; return false; }
+            gameArgs = args; gameLog = ""; gameStatus = label; confirmShader = ""; gameProc.running = true;
+            return true;
+        }
         // destructive shader actions need a second click on the same button
         function shaderAction(args, key, label) {
             if (confirmShader !== key) { confirmShader = key; return; }
