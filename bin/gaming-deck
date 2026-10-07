@@ -3368,10 +3368,12 @@ cmd_fx_status() {
             (.[$k] // []) | map(. + {installed:(($a != "") and ((.url | capture("nexusmods\\.com/[^/]+/mods/(?<id>[0-9]+)")? .id) as $id
                                                    | $id != null and ($a | test("-" + $id + "-"))))})'; else echo '[]'; fi)" \
         --arg nexus "$(if [[ -n "$key" ]]; then nexus_reshade_url "$key" "$(game_label "$key")"; fi)" \
+        --argjson logErr "$(if [[ -n "$key" && "$mode" == reshade ]]; then reshade_log_errors "$key"; else echo null; fi)" \
         --arg rver "$(reshade_version | sed 's/^ReShade-//')" --arg rlatest "$(reshade_latest 2>/dev/null)" \
         --arg d3dc "$([[ -f "$RESHADE_BIN/d3dcompiler_47.dll.64" && -f "$RESHADE_BIN/d3dcompiler_47.dll.32" ]] && echo 1 || echo 0)" \
         --arg chaotic "$(grep -qE '^[[:space:]]*\[chaotic-aur\]' "$PACMAN_CONF" 2>/dev/null && echo 1 || echo 0)" '{
         nexusUrl:$nexus,
+        logErrors:$logErr,
         vkbasalt:($v64 != ""), vkbasalt32:($v32 != ""), version:$v64, effects:$n, shadersInstalled:($n > 0),
         chaotic:($chaotic == "1"), vendor:$vendor, gpu:$gpu, current:$cur, route:$route, online:$online,
         installCmd:(if $v64 != "" and $v32 != "" then "" else "sudo pacman -S --needed vkbasalt lib32-vkbasalt" end),
@@ -3603,7 +3605,59 @@ cmd_fx_set() {
     jq -r '.skipped[]? | "  ✗ \(.effect): \(.why)"' <<<"$rep"
     [[ "$(jq '.partial | length' <<<"$rep")" != 0 ]] && log "  ~ $(jq '.partial | length' <<<"$rep") colour value(s) kept at the shader's default (vkBasalt can't set vectors)"
     history_add "visual shaders" gaming "$key $(jq -r '.name' <<<"$rep") ($mode)" 0
+    [[ "$what" == sfx:* || "$what" == file:* ]] && fx_look_keep "$key" "$rep"
     return 0
+}
+
+# --- MY LOOKS: every preset applied to a game is kept, to switch back with one click ---
+# <game dir>/looks/<slug>/{preset.ini, look.json}; the shaders an import brought stay in
+# Shaders/imported, so a kept look works without its archive.
+fx_look_slug() {   # report → a stable id for "this preset"
+    jq -r 'if .source == "sfx" then "sfx-\(.id)" else "file-" + ((.name // "") + "|" + (.archive // "")) end' <<<"$1" \
+        | { read -r s; if [[ "$s" == sfx-* ]]; then echo "$s"; else echo "file-$(printf '%s' "${s#file-}" | sha1sum | cut -c1-12)"; fi; }
+}
+fx_look_keep() {   # key report
+    local key="$1" rep="$2" d slug l now; d="$(fx_key_dir "$key")"
+    [[ -s "$d/preset.ini" ]] || return 0
+    slug="${FX_LOOK_SLUG:-$(fx_look_slug "$rep")}"; l="$d/looks/$slug"; now="$(date +%s)"
+    mkdir -p "$l" && cp -f -- "$d/preset.ini" "$l/preset.ini"
+    jq -c --arg slug "$slug" --argjson now "$now" --argjson old "$(cat "$l/look.json" 2>/dev/null || echo '{}')" \
+        '{slug:$slug, name, source, id, url, sfxGame, archive, effects:.applied, savedAt:($old.savedAt // $now), usedAt:$now}
+         | with_entries(select(.value != null))' <<<"$rep" > "$l/look.json"
+}
+# fx looks <key> → [{slug, name, source, effects, usedAt, current}] (last used first)
+cmd_fx_looks() {
+    local key="$1" d cur=""; d="$(fx_key_dir "$key")"
+    [[ -s "$d/report.json" ]] && cur="$(fx_look_slug "$(cat "$d/report.json")")"
+    # the look already on (applied before this list existed) joins it
+    if [[ -n "$cur" && ! -e "$d/looks/$cur" ]] && jq -e '.source == "sfx" or .source == "file"' "$d/report.json" >/dev/null 2>&1; then
+        fx_look_keep "$key" "$(cat "$d/report.json")"
+    fi
+    if compgen -G "$d/looks/*/look.json" >/dev/null; then
+        jq -sc --arg cur "$cur" 'map(. + {current:(.slug == $cur)}) | sort_by((if .current then 0 else 1 end), -.usedAt)' "$d"/looks/*/look.json
+    else echo '[]'; fi
+}
+# fx look use|rm <key> <slug>
+cmd_fx_look() {
+    local sub="$1" key="$2" slug="$3" d l meta
+    [[ "$slug" =~ ^(sfx|file)-[A-Za-z0-9]+$ ]] || { err "use: fx look use|rm <key> <slug>"; return 2; }
+    d="$(fx_key_dir "$key")"; l="$d/looks/$slug"
+    [[ -s "$l/look.json" ]] || { err "no such look for $(game_label "$key")"; return 2; }
+    case "$sub" in
+        rm) rm -rf -- "$l"; log "✔ Removed from your looks: $(jq -r .name "$l/look.json" 2>/dev/null || echo "$slug")" ;;
+        use)
+            meta="$(cat "$l/look.json")"; cp -f -- "$l/preset.ini" "$d/look.keep"
+            # a SweetFX DB preset goes through its page again (its link and name stay right);
+            # offline, or for an import, the kept file is enough
+            if [[ "$(jq -r .source <<<"$meta")" == sfx ]] && FX_LOOK_SLUG="$slug" FX_SFX_GAME="$(jq -r '.sfxGame // ""' <<<"$meta")" \
+                    cmd_fx_set "$key" "sfx:$(jq -r .id <<<"$meta")" 2>/dev/null; then :
+            else
+                FX_LOOK_SLUG="$slug" FX_IMPORT_NAME="$(jq -r .name <<<"$meta")" FX_IMPORT_ARCHIVE="$(jq -r '.archive // ""' <<<"$meta")" \
+                    cmd_fx_set "$key" "file:$d/look.keep" || { rm -f "$d/look.keep"; return 4; }
+            fi
+            rm -f "$d/look.keep" ;;
+        *) err "use: fx look use|rm <key> <slug>"; return 2 ;;
+    esac
 }
 
 # fx mode <key> reshade [exe] [api] | vkbasalt — switch route, keep the look
@@ -3907,6 +3961,23 @@ reshade_set_shots() {   # key ini
 }
 
 reshade_state() { local f; f="$(fx_key_dir "$1")/reshade.json"; [[ -s "$f" ]] && cat "$f"; }
+# effects that didn't build the last time the game ran (its ReShade.log is rewritten at every start)
+# → {at:<log time>, errors:[{file, why}]}; why = the first reason ReShade gives
+reshade_log_errors() {   # key
+    local st log; st="$(reshade_state "$1")" || { echo null; return; }
+    log="$(jq -r .dir <<<"$st")/ReShade.log"; [[ -s "$log" ]] || { echo null; return; }
+    tr -d '\r' < "$log" | awk '
+        /\| ERROR \| Failed to compile / {
+            f = $0; sub(/.*Failed to compile .*[\\\/]/, "", f); sub(/'"'"':?$/, "", f)
+            if (!(f in seen)) { seen[f] = 1; order[++n] = f; want = f } else want = ""; next }
+        /^[0-9][0-9]:[0-9][0-9]:/ { want = ""; next }
+        want != "" && !(want in why) && /error/ { w = $0; sub(/^.*\([0-9]+, ?[0-9]+\): ?/, "", w); why[want] = w }
+        END { for (i = 1; i <= n; i++) printf "%s\t%s\n", order[i], why[order[i]] }' \
+    | jq -Rsc --argjson at "$(stat -c %Y "$log")" --arg tech "$(grep -m1 '^Techniques=' "$(fx_key_dir "$1")/ReShadePreset.ini" 2>/dev/null)" '
+        ($tech | ascii_downcase) as $t
+        | {at:$at, errors:[split("\n")[] | select(. != "") | split("\t")
+                           | . as $r | {file:$r[0], why:($r[1] // ""), inLook:($t | contains("@" + ($r[0] | ascii_downcase)))}]}'
+}
 
 # fx reshade on <key> [exe path] [dxgi|d3d9|opengl32]
 cmd_reshade_on() {
@@ -4422,6 +4493,8 @@ cmd_fx() {
         presets)  cmd_fx_presets "${1:-}" ;;
         set)      FX_SFX_GAME="${3:-}" cmd_fx_set "${1:-}" "${2:-}" ;;
         importlist) cmd_fx_importlist "${1:-}" ;;
+        looks)    cmd_fx_looks "${1:-}" ;;
+        look)     cmd_fx_look "${1:-}" "${2:-}" "${3:-}" ;;
         addshaders) cmd_fx_addshaders "${1:-}" ;;
         link)     cmd_fx_link "$@" ;;
         import)   cmd_fx_import "${1:-}" "${2:-}" "${3:-}" ;;

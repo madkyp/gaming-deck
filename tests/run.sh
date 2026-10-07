@@ -1012,6 +1012,18 @@ eq "its ReShade.ini / dxgi.dll are not used" "$(readlink "$SG/Binaries/Win64/dxg
 eq "a chosen preset from the archive" "$(jq -r .name "$RP/report.json")" "Soft"
 "$CD" fx mode steam:5000 vkbasalt >/dev/null 2>&1
 eq "switching route keeps an imported look" "$(jq -c '[.source, .name, .mode]' "$RP/report.json")" '["file","Soft","vkbasalt"]'
+LK() { "$CD" fx looks steam:5000 | jq -c 'map(select(.source == "file"))'; }   # (the SweetFX looks of earlier tests are there too)
+eq "MY LOOKS keeps both imported presets, the one on now first" "$(LK | jq -c '[.[] | [.name, .current]]')" '[["Soft",true],["Realistica",false]]'
+"$CD" fx look use steam:5000 "$(LK | jq -r '.[] | select(.name == "Realistica") | .slug')" >/dev/null 2>&1
+eq "…one click puts an earlier one back, without its archive" "$(jq -c '[.name, .source, .archive]' "$RP/report.json")" '["Realistica","file","Realistica.zip"]'
+eq "…and it stays one entry, not a new one" "$(LK | jq -c '[.[] | [.name, .current]]')" '[["Realistica",true],["Soft",false]]'
+"$CD" fx look rm steam:5000 "$(LK | jq -r '.[] | select(.name == "Soft") | .slug')" >/dev/null
+eq "✕ takes one off the list" "$(LK | jq -c '[.[].name]')" '["Realistica"]'
+"$CD" fx look use steam:5000 'file-../x' >/dev/null 2>&1; eq "a bad look id is refused" "$?" 2
+"$CD" fx mode steam:5000 reshade >/dev/null 2>&1
+printf '10:00:00:001 [ 1] | INFO  | Initializing\r\n10:00:01:000 [ 2] | ERROR | Failed to compile '"'"'Z:\\x\\Shaders\\MyGrain.fx'"'"':\r\nZ:\\x\\MyGrain.fx(3, 1): preprocessor error: could not open included file '"'"'Lib/A.fxh'"'"'\r\n10:00:01:500 [ 2] | ERROR | Failed to compile '"'"'Z:\\x\\Other.fx'"'"':\r\nZ:\\x\\Other.fx(1, 1): error X3000: syntax error\r\n10:00:02:000 [ 2] | INFO  | done\r\n' > "$SG/Binaries/Win64/ReShade.log"
+eq "ReShade.log: what didn't build, why, and whether this look uses it" "$("$CD" fx status steam:5000 | jq -c '[.logErrors.errors[] | [.file, .inLook, .why]]')" \
+   '[["MyGrain.fx",true,"preprocessor error: could not open included file '"'"'Lib/A.fxh'"'"'"],["Other.fx",false,"error X3000: syntax error"]]'
 echo 'nothing' > "$T/nexus/readme.txt"
 "$CD" fx import steam:5000 "$T/nexus/readme.txt" >/dev/null 2>&1; eq "a file without a preset is refused" "$?" 4
 mkdir -p "$T/nexus/onlyfx"; echo 'technique Sharp2 { pass { } }' > "$T/nexus/onlyfx/Sharp2.fx"; cp "$NX/reshade-shaders/Shaders/Vibrance.fx" "$T/nexus/onlyfx/"

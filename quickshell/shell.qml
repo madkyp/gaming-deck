@@ -232,6 +232,8 @@ ShellRoot {
             ];
         }
         property int    fxStepsDone: fxSteps.filter(function (s) { return s[0]; }).length
+        property var    fxLooks: []         // MY LOOKS: the presets this game has had (fx looks)
+        property string fxLookRm: ""        // a look waiting for its second click to be removed
         property var    fxImportList: []    // its presets, when there's more than one
         property var    fxScan: []          // fx scan: every game's best preset / compatibility
         property var    fxScanByKey: { var m = {}; fxScan.forEach(function (r) { m[r.key] = r; }); return m; }
@@ -652,6 +654,7 @@ ShellRoot {
             stdout: StdioCollector {
                 onStreamFinished: {
                     try { win.fx = JSON.parse(text); } catch (e) { win.fx = {}; }
+                    fxLooksProc.command = [win.scriptPath, "fx", "looks", win.selGame]; fxLooksProc.running = true;
                     // a new game (or the tab just opened) starts at the top: loading content can leave it scrolled
                     if (win.fxTopFor !== win.selGame) { win.fxTopFor = win.selGame; Qt.callLater(win.fxToTop); }
                 }
@@ -668,6 +671,10 @@ ShellRoot {
                     fxImpListProc.command = [win.scriptPath, "fx", "importlist", f]; fxImpListProc.running = true;
                 }
             }
+        }
+        Process {
+            id: fxLooksProc
+            stdout: StdioCollector { onStreamFinished: { try { win.fxLooks = JSON.parse(text); } catch (e) { win.fxLooks = []; } } }
         }
         Process {
             id: fxAddShadersProc
@@ -2270,6 +2277,19 @@ ShellRoot {
                                                 }
                                             }
                                         }
+                                        // what ReShade couldn't build the last time the game ran (from its ReShade.log)
+                                        Repeater {
+                                            model: (win.fx.logErrors || {}).errors || []
+                                            delegate: Text {
+                                                required property var modelData
+                                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                                font.family: win.mono; font.pixelSize: 10
+                                                color: modelData.inLook ? pal.bad : pal.dim
+                                                text: (modelData.inLook ? "✘ " + modelData.file + win.t(" didn't build the last time you played, so it isn't applied: ")
+                                                                        : "· " + modelData.file + win.t(" (a shader in your library, not in this look) didn't build — harmless: "))
+                                                      + modelData.why.replace(/^preprocessor error: /, "")
+                                            }
+                                        }
                                         RowLayout {
                                             Layout.fillWidth: true; spacing: 6
                                             Text {
@@ -2649,6 +2669,48 @@ ShellRoot {
                                 ColumnLayout {
                                     id: fxLooksCol
                                     anchors.fill: parent; anchors.margins: 10; spacing: 8
+                                    // MY LOOKS: every preset this game has had, one click to go back to it
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+                                        visible: win.fxLooks.length > 0
+                                        Text {
+                                            text: win.t("MY LOOKS ⓘ"); Layout.preferredWidth: 92; Layout.alignment: Qt.AlignTop; Layout.topMargin: 6
+                                            color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 1
+                                            MouseArea { id: myLooksMa; anchors.fill: parent; hoverEnabled: true }
+                                            Tip { visible: myLooksMa.containsMouse; text: win.t("Every preset you applied or imported for this game is kept here (with its shaders), so you can go back to it without downloading it again. ✕ removes it from the list.") }
+                                        }
+                                        Flow {
+                                            Layout.fillWidth: true; spacing: 6
+                                            Repeater {
+                                                model: win.fxLooks
+                                                delegate: Row {
+                                                    required property var modelData
+                                                    property string k: "look:" + modelData.slug
+                                                    spacing: 2
+                                                    Chip {
+                                                        label: win.fxConfirm === parent.k ? win.t("CONFIRM?")
+                                                               : (modelData.current ? "✓ " : "") + modelData.name + (modelData.effects ? "  ·  " + modelData.effects + " fx" : "")
+                                                        tint: pal.ok; active: modelData.current
+                                                        tip: (modelData.source === "sfx" ? "SweetFX DB" : (modelData.archive || win.t("imported file")))
+                                                             + (modelData.current ? win.t(" · on now") : win.t(" · click to put it back"))
+                                                        on: !win.gameBusy
+                                                        onClicked: if (!modelData.current) win.fxApply(parent.k, win.t("APPLYING…"), ["fx", "look", "use", win.selGame, modelData.slug])
+                                                    }
+                                                    Chip {
+                                                        label: win.fxLookRm === modelData.slug ? win.t("REMOVE?") : "✕"
+                                                        tint: pal.bad; active: win.fxLookRm === modelData.slug
+                                                        tip: win.t("Remove from MY LOOKS (the game keeps its current look)")
+                                                        on: !win.gameBusy
+                                                        onClicked: {
+                                                            if (win.fxLookRm !== modelData.slug) { win.fxLookRm = modelData.slug; return; }
+                                                            win.fxLookRm = "";
+                                                            win.runGame(["fx", "look", "rm", win.selGame, modelData.slug], win.t("REMOVING…"));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     RowLayout {
                                         Layout.fillWidth: true; spacing: 6
                                         Text { text: win.t("QUICK LOOK"); Layout.preferredWidth: 92; color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 1 }
