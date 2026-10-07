@@ -1960,6 +1960,7 @@ bench_overlay() {   # key profile-json [launch command] → profile-json (+ .man
     out="$(jq -c --arg mhc "$mhc" --argjson v "$(jq -c --arg x "$variant" '.[$x] // {}' <<<"$cfg")" '
         . + {mangohud:true, mangohudConfig:$mhc}
         + (if ($v.gamemode // "") != "" then {gamemode:($v.gamemode == "true")} else {} end)
+        + (if ($v.fx // "") != "" then {fx:($v.fx == "on")} else {} end)
         + (if ($v.args // "") != "" then {args:$v.args} else {} end)
         + (if ($v.prefix // "") != "" then {prefix:$v.prefix} else {} end)
         + {env:(.env + ($v.env // "" | split(" ") | map(select(test("^[A-Za-z_][A-Za-z0-9_]*=")) | {key:split("=")[0], value:(split("=")[1:] | join("="))}) | from_entries))}' <<<"$p")"
@@ -1990,10 +1991,11 @@ cmd_bench() {
                     duration|delay)
                         [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 5 && v <= 900 )) || { err "$f must be 5–900 seconds"; return 2; }
                         cfg="$(jq -c --arg f "$f" --argjson v "$v" '.[$f] = $v' <<<"$cfg")"; continue ;;
-                    label|env|args|prefix|gamemode|proton)
+                    label|env|args|prefix|gamemode|proton|fx)
                         [[ -n "$var" ]] || { err "say which variant first: A or B"; return 2; }
                         [[ "$v" != *[\"\'\`\$\;\&\|\<\>]* ]] || { err "$f can't contain quotes or shell characters"; return 2; }
                         [[ "$f" == gamemode && -n "$v" && "$v" != true && "$v" != false ]] && { err "gamemode: true, false or empty"; return 2; }
+                        [[ "$f" == fx && -n "$v" && "$v" != on && "$v" != off ]] && { err "fx: on, off or empty"; return 2; }
                         if [[ "$f" == proton && -n "$v" ]] && ! cmd_compattools | jq -e --arg t "$v" 'any(.[]; .name == $t)' >/dev/null; then
                             err "unknown Proton: $v"; return 2; fi
                         patch="$(jq -cn --arg f "$f" --arg v "$v" '{($f): $v}')"
@@ -2033,7 +2035,17 @@ cmd_bench() {
             bench_cfg "$key" | jq -c 'del(.originalProton)' > "$dir/config.json"
             log "✔ Proton restored to $orig." ;;
         clear) rm -rf "$dir/A" "$dir/B" "$BENCH_ARMED"; log "✔ Benchmark results of $(game_label "$key") cleared." ;;
-        *) err "use: bench get|set|run|restore|clear <key> …"; return 2 ;;
+        # what the look on costs: A without effects, B with it, the rest as the profile has it
+        lookcost)
+            local rep look noname="${1:-No effects}"; rep="$(fx_key_dir "$key")/report.json"
+            noname="$(tr -d '"'"'"'`$;&|<>' <<<"$noname" | cut -c1-40)"
+            [[ -s "$rep" ]] && [[ "$(profile_get "$key" | jq -r .fx)" == true ]] || { err "no look on for $(game_label "$key"): FX first"; return 2; }
+            look="$(jq -r '.name // "look"' "$rep" | tr -d '"'"'"'`$;&|<>' | cut -c1-40)"
+            cfg="$(bench_cfg "$key" | jq -c --arg l "$look" --arg n "$noname" '
+                .A = {label:$n, fx:"off"} | .B = {label:$l, fx:"on"}')"
+            mkdir -p "$dir"; printf '%s\n' "$cfg" > "$dir/config.json"; rm -rf "$dir/A" "$dir/B"
+            log "✔ Ready to measure $look: RUN A (no effects), then RUN B (with it), the same scene both times." ;;
+        *) err "use: bench get|set|run|restore|clear|lookcost <key> …"; return 2 ;;
     esac
 }
 

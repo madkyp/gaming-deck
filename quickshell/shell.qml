@@ -234,6 +234,14 @@ ShellRoot {
         property int    fxStepsDone: fxSteps.filter(function (s) { return s[0]; }).length
         property var    fxLooks: []         // MY LOOKS: the presets this game has had (fx looks)
         property string fxLookRm: ""        // a look waiting for its second click to be removed
+        property bool   lookCostConfirm: false   // the bench has results: preparing a new one clears them, second click
+        // prepares BENCH to measure the look on: A without effects, B with it
+        function lookCost() {
+            var r = bench.results || {};
+            if (benchLoadedFor === selGame && (r.A || r.B) && !lookCostConfirm) { lookCostConfirm = true; return; }
+            lookCostConfirm = false;
+            runGame(["bench", "lookcost", selGame, win.t("No effects")], win.t("PREPARING…"));
+        }
         property var    fxImportList: []    // its presets, when there's more than one
         property var    fxScan: []          // fx scan: every game's best preset / compatibility
         property var    fxScanByKey: { var m = {}; fxScan.forEach(function (r) { m[r.key] = r; }); return m; }
@@ -406,14 +414,14 @@ ShellRoot {
             [benchA, benchB].forEach(function (w) {
                 var x = bench[w.v] || {};
                 w.label = x.label || w.v; w.env = x.env || ""; w.args = x.args || "";
-                w.gm = x.gamemode || ""; w.proton = x.proton || "";
+                w.gm = x.gamemode || ""; w.proton = x.proton || ""; w.fxv = x.fx || "";
             });
         }
         function saveBench(extra) {
             var a = ["bench", "set", selGame];
             [benchA, benchB].forEach(function (w) {
                 a = a.concat([w.v, "label=" + w.label.trim(), "env=" + w.env.trim(), "args=" + w.args.trim(),
-                              "gamemode=" + w.gm, "proton=" + w.proton]);
+                              "gamemode=" + w.gm, "proton=" + w.proton, "fx=" + w.fxv]);
             });
             runGame(a.concat(extra || []), win.t("SAVING…"));
         }
@@ -517,6 +525,7 @@ ShellRoot {
                     // started after this handler returns (restarting a Process from its own onExited is unsafe)
                     if (c === 0) { Qt.callLater(function () { win.runGame(["bench", "run", win.selGame, v], win.t("RUN ") + v + "…"); }); return; }
                 }
+                if (win.gameArgs[0] === "bench" && win.gameArgs[1] === "lookcost" && c === 0) { win.benchLoadedFor = ""; win.gameView = "bench"; }
                 if (win.gameArgs[0] === "bench") benchProc.running = true;
                 if (win.gameArgs[0] === "prefix") { pfxProc.running = true; pfxBakProc.running = true; }
                 if (win.gameArgs[0] === "steamcompat") upsProc.running = true;
@@ -891,6 +900,7 @@ ShellRoot {
             property alias env: bvEnv.text
             property alias args: bvArgs.text
             property string gm: ""        // "", "true", "false"
+            property string fxv: ""       // "", "on", "off": the look on for this run, or not
             property string proton: ""    // "" = as is
             Layout.fillWidth: true
             implicitHeight: bvCol.implicitHeight + 16
@@ -912,6 +922,15 @@ ShellRoot {
                         model: [["", win.t("PROFILE")], ["true", "ON"], ["false", "OFF"]]
                         delegate: Chip { required property var modelData; label: modelData[1]; implicitHeight: 22
                                          active: bv.gm === modelData[0]; onClicked: bv.gm = modelData[0] }
+                    }
+                }
+                Flow {
+                    Layout.fillWidth: true; spacing: 4
+                    Text { text: "FX"; color: pal.dim; font.family: win.mono; font.pixelSize: 8; height: 22; verticalAlignment: Text.AlignVCenter }
+                    Repeater {
+                        model: [["", win.t("PROFILE")], ["on", "ON"], ["off", "OFF"]]
+                        delegate: Chip { required property var modelData; label: modelData[1]; implicitHeight: 22
+                                         active: bv.fxv === modelData[0]; onClicked: bv.fxv = modelData[0] }
                     }
                 }
                 Flow {
@@ -2256,6 +2275,13 @@ ShellRoot {
                                             visible: win.fxStepsDone === 5 && win.fxCur.source === "sfx"
                                             label: "PRESET ↗"; onClicked: Qt.openUrlExternally(win.fxCur.url)
                                         }
+                                        Chip {
+                                            visible: win.selGameSource === "steam" && win.fxActive && win.fxStepsDone === 5
+                                            label: win.lookCostConfirm ? win.t("CLEARS THE BENCH RESULTS · SURE?") : win.t("⏱ WHAT DOES IT COST?")
+                                            tint: pal.amber; active: win.lookCostConfirm; on: !win.gameBusy
+                                            tip: win.t("Measure this look in BENCH: run A without effects and run B with it, same scene, and see the FPS it takes")
+                                            onClicked: win.lookCost()
+                                        }
                                         FxRemoveBtn { visible: win.fxStepsDone === 5 }
                                         Chip { label: win.fxGuideOpen ? win.t("GUIDE ▴") : win.t("GUIDE ▾"); tip: win.t("Every step, with what each one does"); onClicked: win.fxGuideOpen = !win.fxGuideOpen }
                                     }
@@ -2695,6 +2721,13 @@ ShellRoot {
                                         Chip {
                                             visible: win.fxActive && win.fxCur.source === "sfx"
                                             label: "PRESET ↗"; onClicked: Qt.openUrlExternally(win.fxCur.url)
+                                        }
+                                        Chip {
+                                            visible: win.selGameSource === "steam" && win.fxActive
+                                            label: win.lookCostConfirm ? win.t("CLEARS THE BENCH RESULTS · SURE?") : win.t("⏱ WHAT DOES IT COST?")
+                                            tint: pal.amber; active: win.lookCostConfirm; on: !win.gameBusy
+                                            tip: win.t("Measure this look in BENCH: run A without effects and run B with it, same scene, and see the FPS it takes")
+                                            onClicked: win.lookCost()
                                         }
                                         FxRemoveBtn { visible: win.fxActive }
                                     }

@@ -471,6 +471,15 @@ has "variant env applied" "$O" "W=1"
 has "variant args applied" "$O" "args=-vulkan"
 eq "the run records what it really used (label, env, args; no Proton for a native game)" \
    "$(jq -c '[.label, .env.PROTON_ENABLE_WAYLAND, .args, .proton]' "$HOME/.local/share/gaming-deck/gaming/bench/steam_100/B/used.json")" '["wayland","1","-vulkan",""]'
+"$CD" bench lookcost steam:100 >/dev/null 2>&1; eq "WHAT DOES IT COST needs a look on" "$?" 2
+mkdir -p "$HOME/.local/share/gaming-deck/gaming/fx/steam_100"; echo '{"name":"My \"Look\"","mode":"reshade","source":"file"}' > "$HOME/.local/share/gaming-deck/gaming/fx/steam_100/report.json"
+"$CD" gprofile set steam:100 fx=true >/dev/null 2>&1 || bash -c 'source "$1"; profile_write steam:100 "{\"fx\":true}"' _ "$CD"
+"$CD" bench lookcost steam:100 'Sin efectos' >/dev/null
+eq "…then A = no effects, B = the look (quotes dropped from the name)" "$("$CD" bench get steam:100 | jq -c '[.A.label, .A.fx, .B.label, .B.fx]')" '["Sin efectos","off","My Look","on"]'
+"$CD" bench run steam:100 A >/dev/null
+O="$(SteamAppId=100 "$CD" run "$T/fake/bgame")"
+eq "run A of it goes without effects, and records so" "$(jq -c '[.label, .fx]' "$HOME/.local/share/gaming-deck/gaming/bench/steam_100/A/used.json")" '["Sin efectos",null]'
+"$CD" bench set steam:100 A fx=maybe >/dev/null 2>&1; eq "fx: on, off or empty only" "$?" 2
 O="$(SteamAppId=100 "$CD" run "$T/fake/bgame")"
 hasnt "armed only once: the next launch is normal" "$O" "output_folder="
 mapfile -t fts < <(for i in $(seq 100); do echo 20; done)
