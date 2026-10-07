@@ -18,6 +18,9 @@ export GAMING_DECK_WEB_PID="$T/web.pid"   # never the real guide browser
 export GAMING_DECK_WEB_HELPER="$T/no-web-helper"   # …nor ever started (guides go to the xdg-open stub)
 export GAMING_DECK_PANEL_QML="$T/no-panel.qml"   # never a real panel (install.sh puts one in the test $HOME)
 export GAMING_DECK_FX_EXTRA_PACKAGES="$T/fx-extra.json"; echo "[]" > "$T/fx-extra.json"   # community packs: none unless a test adds one
+# Nexus's list of games: a local one (never the network)
+export GAMING_DECK_NEXUS_GAMES_URL="file://$T/nexus-games.json"
+echo '[{"name":"Elden Ring","domain_name":"eldenring"},{"name":"Lords of the Fallen","domain_name":"lordsofthefallen"},{"name":"Lords of the Fallen (2023)","domain_name":"lordsofthefallen2023"},{"name":"Hogwarts Legacy","domain_name":"hogwartslegacy"}]' > "$T/nexus-games.json"
 unset XDG_DATA_HOME XDG_CACHE_HOME XDG_CONFIG_HOME GAMING_DECK_APPS_DIR INSTALL_ANY_APPS_DIR GITHUB_TOKEN
 export LC_ALL=C.UTF-8
 mkdir -p "$HOME" "$T/bin" "$T/dl" "$T/fake" "$T/sys"
@@ -961,7 +964,11 @@ eq "PCGamingWiki row matched (™ and link label ignored), notes cleaned" "$(row
 eq "depth note → ReShade definition" "$(row steam:5000 | jq -c .defines)" '["RESHADE_DEPTH_INPUT_IS_REVERSED=1"]'
 eq "\"Online games to avoid\" → blocked, not eligible" "$(row steam:200 | jq -c '[.blocked, .eligible]')" '[true,false]'
 eq "single-player game eligible" "$(row steam:5000 | jq .eligible)" true
-has "Nexus search link" "$(row steam:5000 | jq -r .nexus)" "site%3Anexusmods.com%20Story%20Game%20reshade%20preset"
+has "a game Nexus doesn't have → a web search of Nexus" "$(row steam:5000 | jq -r .nexus)" "site%3Anexusmods.com%20Story%20Game%20reshade%20preset"
+NXU() { bash -c 'source "$1"; nexus_reshade_url "$2" "$3"' _ "$CD" "$@"; }
+eq "a game on Nexus → its own ReShade search" "$(NXU steam:1 'ELDEN RING')" "https://www.nexusmods.com/games/eldenring/search?keyword=RESHADE"
+eq "…™ and a subtitle in brackets don't get in the way" "$(NXU steam:2 'Hogwarts Legacy™ (Deluxe)')" "https://www.nexusmods.com/games/hogwartslegacy/search?keyword=RESHADE"
+eq "…Lords of the Fallen (Steam 1501750) is the 2023 one, not the 2014 one" "$(NXU steam:1501750 'Lords of the Fallen')" "https://www.nexusmods.com/games/lordsofthefallen2023/search?keyword=RESHADE"
 eq "cached copy for the GUI" "$("$CD" fx scan --cached | jq length)" "$(jq length <<<"$SC")"
 O="$("$CD" fx autoinstall steam:5000 steam:200 2>&1)"
 has "blocked game skipped, with the reason" "$O" "Second Game: skipped (ReShade is banned"

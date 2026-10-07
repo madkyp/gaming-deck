@@ -2338,7 +2338,7 @@ ShellRoot {
                                                 visible: next && index === 3
                                                 label: (win.fx.links || []).length ? win.t("OPEN ") + win.fx.links[0].label + " ↗" : win.t("SEARCH NEXUS ↗")
                                                 onClicked: Qt.openUrlExternally((win.fx.links || []).length ? win.fx.links[0].url
-                                                    : "https://duckduckgo.com/?q=" + encodeURIComponent("site:nexusmods.com " + win.selGameName + " reshade preset"))
+                                                    : (win.fx.nexusUrl || "https://duckduckgo.com/?q=" + encodeURIComponent("site:nexusmods.com " + win.selGameName + " reshade preset")))
                                             }
                                             MiniBtn {
                                                 visible: next && index === 3 && (win.fx.links || []).length > 0
@@ -2680,7 +2680,7 @@ ShellRoot {
                                         }
                                         Chip {
                                             label: win.t("SEARCH NEXUS ↗"); tip: win.t("Web search for this game's ReShade presets on Nexus Mods")
-                                            onClicked: Qt.openUrlExternally("https://duckduckgo.com/?q=" + encodeURIComponent("site:nexusmods.com " + win.selGameName + " reshade preset"))
+                                            onClicked: Qt.openUrlExternally((win.fx.nexusUrl || "https://duckduckgo.com/?q=" + encodeURIComponent("site:nexusmods.com " + win.selGameName + " reshade preset")))
                                         }
                                         Text {
                                             Layout.fillWidth: true; elide: Text.ElideRight
