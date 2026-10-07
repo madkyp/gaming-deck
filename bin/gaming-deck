@@ -1028,6 +1028,11 @@ cmd_run() {
     panel_autostart
     local t0 child rc rec=""
     t0="$(date +%s)"
+    # Mod Engine 3 (mods of FromSoftware games, from Crisol) passes the game's own arguments after "--"
+    if ((${#extra[@]})) && [[ "${1##*/}" == me3 ]]; then
+        local a hasdd=false; for a in "$@"; do [[ "$a" == -- ]] && hasdd=true; done
+        $hasdd || extra=(-- "${extra[@]}")
+    fi
     "${pre[@]}" "$@" "${extra[@]}" &
     child=$!
     [[ "$key" != default ]] && rec="$(session_record_start "$key" "$child")"

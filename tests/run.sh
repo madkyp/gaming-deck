@@ -276,6 +276,10 @@ eq "run.log past 256 KB keeps its last 2000 lines (+ this launch: start and exit
 "$CD" gprofile set steam:200 'prefix=er-patcher-missing --' >/dev/null
 O="$(SteamAppId=200 "$CD" run "$T/fake/game" 2>&1)"
 eq "a PREFIX program that isn't installed is skipped: the game still starts" "$O" "FOO=bar HUD=fps args=-windowed"
+mkdir -p "$T/me3dir"; printf '#!/bin/sh\necho "me3 $*"\n' > "$T/me3dir/me3"; chmod +x "$T/me3dir/me3"
+"$CD" gprofile set steam:200 'args=-skipintro' 'env=FOO=me3env' >/dev/null
+O="$(FOO= "$CD" run --profile steam:200 -- "$T/me3dir/me3" launch --game eldenring -p x.me3)"
+eq "through Mod Engine 3 (Crisol), the profile's args go after its --" "$O" "me3 launch --game eldenring -p x.me3 -- -skipintro"
 "$CD" gprofile reset steam:200 >/dev/null
 eq "reset drops the custom profile" "$("$CD" gprofile get steam:200 | jq -r .custom)" false
 
