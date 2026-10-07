@@ -1264,6 +1264,10 @@ rm -f "$T/dunst.log"; SteamAppId=100 "$CD" run "$T/fake/okgame" >/dev/null 2>&1
 eq "a dead game's leftover marker doesn't keep things paused" "$(cat "$T/dunst.paused") $(paste -sd, "$T/dunst.log")" "false set-paused true,set-paused false"
 eq "hook asks Umbral for a session when they're on" "$("$CD" hook umbral:x 2>/dev/null | jq .session)" true
 "$CD" playing quiet off >/dev/null; "$CD" playing lite off >/dev/null
+# a notification client that can't reach D-Bus hangs: Gaming Deck gives it 2 s, not forever
+mv "$T/bin/dunstctl" "$T/bin/dunstctl.keep" 2>/dev/null; stub swaync-client 'sleep 30'
+S0=$(date +%s); "$CD" playing >/dev/null; eq "a hung notification client doesn't hang STATUS or a launch" "$(( $(date +%s) - S0 < 8 ))" 1
+rm -f "$T/bin/swaync-client"; mv "$T/bin/dunstctl.keep" "$T/bin/dunstctl" 2>/dev/null
 rm -f "$T/dunst.log" "$T/hypr.log"; SteamAppId=100 "$CD" run "$T/fake/okgame" >/dev/null 2>&1
 yes "both off → nothing touched" "[[ ! -s '$T/dunst.log' && ! -s '$T/hypr.log' ]]"
 rm -f "$T/bin/dunstctl" "$T/bin/hyprctl"

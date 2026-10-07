@@ -4833,8 +4833,10 @@ cmd_sched() {
 PLAYING_SETTINGS="$GAMING_DIR/playing.json"
 playing_on() { [[ "$(jq -r --arg k "$1" '.[$k] == true' "$PLAYING_SETTINGS" 2>/dev/null)" == true ]]; }
 notifier() {   # the notification daemon that can be paused: dunst | swaync | ""
-    if have dunstctl && dunstctl is-paused >/dev/null 2>&1; then echo dunst
-    elif have swaync-client && swaync-client -D >/dev/null 2>&1; then echo swaync; fi
+    # every call has a 2 s limit: a client that can't reach D-Bus waits forever otherwise,
+    # and this runs at game launch and every few seconds in STATUS
+    if have dunstctl && timeout 2 dunstctl is-paused >/dev/null 2>&1; then echo dunst
+    elif have swaync-client && timeout 2 swaync-client -D >/dev/null 2>&1; then echo swaync; fi
 }
 # hyprctl from a game launched by Steam: find the instance if the env lacks it
 hypr() {
@@ -4849,14 +4851,14 @@ LITE_OPTIONS=(animations:enabled decoration:blur:enabled decoration:shadow:enabl
 quiet_begin() {   # pause notifications (they wait and show when the game ends)
     local n; n="$(notifier)"
     case "$n" in
-        dunst)  [[ "$(dunstctl is-paused)" == false ]] && dunstctl set-paused true && echo dunst > "$1" ;;
-        swaync) [[ "$(swaync-client -D)" == false ]] && swaync-client -dn >/dev/null && echo swaync > "$1" ;;
+        dunst)  [[ "$(timeout 2 dunstctl is-paused)" == false ]] && timeout 2 dunstctl set-paused true && echo dunst > "$1" ;;
+        swaync) [[ "$(timeout 2 swaync-client -D)" == false ]] && timeout 2 swaync-client -dn >/dev/null && echo swaync > "$1" ;;
     esac
 }
 quiet_end() {
     case "$(cat "$1")" in
-        dunst)  dunstctl set-paused false ;;
-        swaync) swaync-client -df >/dev/null ;;
+        dunst)  timeout 2 dunstctl set-paused false ;;
+        swaync) timeout 2 swaync-client -df >/dev/null ;;
     esac
 }
 # set a Hyprland option: Lua config (0.55+, `eval`), else the legacy `keyword`
