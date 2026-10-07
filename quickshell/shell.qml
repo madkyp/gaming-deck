@@ -3197,13 +3197,14 @@ ShellRoot {
                                             id: ovRowCol; anchors.fill: parent; anchors.margins: 8; spacing: 6
                                             RowLayout {
                                                 Layout.fillWidth: true; spacing: 10
+                                                // name and wiki give way when the window is narrow: the buttons always fit
                                                 Text {
-                                                    Layout.preferredWidth: 260; elide: Text.ElideRight
+                                                    Layout.fillWidth: true; Layout.preferredWidth: 260; Layout.minimumWidth: 110; elide: Text.ElideRight
                                                     text: ovRow.modelData.name; color: pal.text; font.pixelSize: 13; font.bold: true
                                                 }
                                                 // achievements
                                                 ColumnLayout {
-                                                    Layout.preferredWidth: 190; Layout.maximumWidth: 190; spacing: 3
+                                                    Layout.preferredWidth: 190; Layout.maximumWidth: 190; Layout.minimumWidth: 130; spacing: 3
                                                     Text {
                                                         font.family: win.mono; font.pixelSize: 10
                                                         color: !ovRow.modelData.ach ? pal.dim : (ovRow.modelData.ach.percent >= 100 ? pal.ok : pal.text)
@@ -3218,14 +3219,14 @@ ShellRoot {
                                                 }
                                                 // wiki
                                                 Text {
-                                                    Layout.preferredWidth: 320; Layout.leftMargin: 14; elide: Text.ElideRight
+                                                    Layout.fillWidth: true; Layout.preferredWidth: 320; Layout.minimumWidth: 0; Layout.leftMargin: 14; elide: Text.ElideRight
                                                     font.family: win.mono; font.pixelSize: 10
                                                     color: ovRow.modelData.wiki.base ? pal.dim : pal.amber
                                                     text: ovRow.modelData.wiki.base ? win.t("wiki: ") + ovRow.modelData.wiki.name : win.t("no wiki found")
                                                 }
-                                                Item { Layout.fillWidth: true }
                                                 Chip { label: "ELITEGUÍAS ↗"; onClicked: win.ovRun(["gopen", "https://www.eliteguias.com/buscar.php?q=" + encodeURIComponent(ovRow.modelData.name)]) }
-                                                Chip { label: "WIKI ↗"; visible: !!ovRow.modelData.wiki.base; onClicked: win.ovRun(["gopen", ovRow.modelData.wiki.base]) }
+                                                // without a wiki the button keeps its place (invisible) so every row's columns line up
+                                                Chip { label: "WIKI ↗"; on: !!ovRow.modelData.wiki.base; opacity: on ? 1 : 0; onClicked: win.ovRun(["gopen", ovRow.modelData.wiki.base]) }
                                                 Chip { label: win.t("SET WIKI"); active: win.ovWikiFor === ovRow.modelData.appid; onClicked: win.ovWikiFor = (win.ovWikiFor === ovRow.modelData.appid ? "" : ovRow.modelData.appid) }
                                             }
                                             // anti-cheat: why the panel stays outside the game
