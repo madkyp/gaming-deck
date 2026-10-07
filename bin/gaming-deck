@@ -916,6 +916,10 @@ cmd_run() {
     p="$(profile_get "$key")"
     mkdir -p "$STATE_DIR/logs"
     local rlog="$STATE_DIR/logs/run.log"
+    # it grows with every launch: past 256 KB only the last 2000 lines stay
+    if [[ -f "$rlog" ]] && (( $(stat -c %s "$rlog" 2>/dev/null || echo 0) > 262144 )); then
+        tail -n 2000 "$rlog" > "$rlog.cut" && replace_file "$rlog.cut" "$rlog"; rm -f "$rlog.cut"
+    fi
     printf '%s  %s  %s\n' "$(date '+%F %T')" "$key" "$*" >> "$rlog"
     p="$(bench_overlay "$key" "$p")"
     # (runs in a subshell above, so the benchmark's MangoHud logging is exported here)

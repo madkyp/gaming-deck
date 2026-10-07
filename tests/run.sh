@@ -270,6 +270,9 @@ eq "wrapper applies env and appends args" "$O" "FOO=bar HUD=fps args=-launcher -
 has "wrapper goes through gamemoderun" "$(cat "$T/wrap.log")" gamemoderun
 O="$("$CD" run --profile default -- "$T/fake/game")"
 eq "no Steam id → default profile" "$O" "FOO= HUD= args="
+RL="$HOME/.local/share/gaming-deck/logs/run.log"; seq 1 40000 | sed 's/^/old launch line /' > "$RL"
+"$CD" run --profile default -- "$T/fake/game" >/dev/null
+eq "run.log past 256 KB keeps its last 2000 lines (+ this launch: start and exit)" "$(wc -l < "$RL") $(sed -n 2000p "$RL")" "2002 old launch line 40000"
 "$CD" gprofile set steam:200 'prefix=er-patcher-missing --' >/dev/null
 O="$(SteamAppId=200 "$CD" run "$T/fake/game" 2>&1)"
 eq "a PREFIX program that isn't installed is skipped: the game still starts" "$O" "FOO=bar HUD=fps args=-windowed"
