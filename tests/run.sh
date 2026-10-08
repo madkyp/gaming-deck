@@ -642,6 +642,8 @@ case "$1" in
   --play) [ "$2" = steam:100 ] || { echo "No existe el juego $2" >&2; exit 2; } ;;
 esac'
 eq "mods: the game's mods in Crisol" "$("$CD" mods steam:100 | jq -c '[.mods, .enabled, .updates, .loader.name]')" '[2,1,1,"ME3"]'
+eq "a game with mods in Crisol gets Gaming Deck's controller suggestion, first and ★" "$("$CD" gsuggest 100 | jq -c '.suggestions[0] | [.token, .deck, .recommended]')" '["SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000",true,true]'
+eq "…not without Crisol" "$(GAMING_DECK_CRISOL=crisol-missing "$CD" gsuggest 100 | jq '[.suggestions[]? | select(.deck)] | length')" 0
 eq "…a game Crisol doesn't have → {}" "$("$CD" mods steam:999)" '{}'
 "$CD" mods foo >/dev/null 2>&1; eq "…not a game key → 2" "$?" 2
 rm -f "$T/crisol.log"; "$CD" mplay steam:100 >/dev/null

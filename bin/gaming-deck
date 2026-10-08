@@ -1610,6 +1610,7 @@ SUG_WHAT="$(cat <<'EOF'
   "PROTON_ENABLE_HDR": "Lets the game output HDR. Needs an HDR monitor and Wayland (PROTON_ENABLE_WAYLAND) or gamescope.",
   "DXVK_HDR": "Lets DirectX games running through DXVK see HDR. Needs an HDR monitor and Wayland or gamescope.",
   "ENABLE_HDR_WSI": "Turns on the Vulkan HDR layer (vk-hdr-layer) so HDR works on a Wayland desktop without gamescope.",
+  "SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT": "The game (through Wine/SDL) only sees Steam's virtual controller, the one Steam Input drives, and ignores the pad's own device: no double or mixed-up controller (e.g. a DualSense with mods).",
   "SteamDeck": "Makes the game believe it runs on a Steam Deck: some games then pick Deck settings, a controller layout or skip their launcher.",
   "MANGOHUD": "Shows the MangoHud overlay (FPS, frame time, temperatures) in the game.",
   "PROTON_USE_NTSYNC": "Uses the kernel's NTSYNC driver for Windows-style synchronisation: smoother frame times in some games. Needs a kernel with /dev/ntsync.",
@@ -1647,7 +1648,7 @@ EOF
 cmd_gsuggest() {
     local id="$1" vendor since
     [[ "$id" =~ ^[0-9]+$ ]] || { err "use: gsuggest <appid>"; return 2; }
-    [[ -s "$PDB_INDEX" ]] || { echo '{"index":false}'; return 0; }
+    [[ -s "$PDB_INDEX" ]] || { echo '{"index":false}' | sug_add_deck "$id"; return 0; }
     local gen cores res
     vendor="$(gpu_vendor)"; since=$(( $(date +%s) - 3 * 365 * 86400 ))
     local gname; gname="$(gpu_name)"
@@ -1743,7 +1744,20 @@ cmd_gsuggest() {
            cores:$cores, screen:$res, window:$w.window,
            reports:$n, vendorReports:$nv, similarReports:(if $ns >= 5 then $ns else 0 end),
            suggestions:(.[:16] | map(. + {what:($what[.token | split("=")[0]] // $what["_" + .kind] // "")}))}' \
-        | sug_mark_installed
+        | sug_mark_installed | sug_add_deck "$id"
+}
+# Gaming Deck's own suggestions, first and ★, for what this PC's setup needs (not from ProtonDB)
+sug_add_deck() {   # appid; ProtonDB suggestions JSON on stdin
+    local j tips="[]" m; j="$(cat)"
+    # mods in Crisol: a game started through a mod loader can see the controller twice (raw + Steam's)
+    if have "$CRISOL" && m="$(cmd_mods "steam:$1" 2>/dev/null)" && [[ "$(jq -r '.mods // 0' <<<"$m" 2>/dev/null)" -gt 0 ]]; then
+        tips="$(jq -c --argjson what "$SUG_WHAT" '. + [{token:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000",
+            key:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000", var:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT",
+            kind:"env", deck:true, foryou:true, recommended:true,
+            what:$what["SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"],
+            why:"This game has mods in Crisol: started through a mod loader it can see the controller twice"}]' <<<"$tips")"
+    fi
+    jq -c --argjson t "$tips" 'if ($t | length) > 0 then .suggestions = ($t + (.suggestions // [])) else . end' <<<"$j"
 }
 # wrappers (gamescope, er-patcher…) get installed:true/false — adding a missing one would stop the game
 sug_mark_installed() {

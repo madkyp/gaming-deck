@@ -346,7 +346,8 @@ ShellRoot {
             return hit === undefined ? null : hit.substring(name.length + 1);
         }
         function sugLabel(x, applied, mark) {
-            var l = (applied ? "✓ " : mark) + x.token + "  " + x.pct + "%";
+            // Gaming Deck's own suggestions have no player share: they say whose they are
+            var l = (applied ? "✓ " : mark) + x.token + "  " + (x.deck ? "· GAMING DECK" : x.pct + "%");
             if (x.installed === false) return l + win.t(" · NOT INSTALLED");
             if (x.kind === "env" && !applied) {
                 var mine = envValue(x.var);
@@ -355,6 +356,8 @@ ShellRoot {
             return l;
         }
         function sugTip(x, applied) {
+            if (x.deck) return (x.what ? win.t(x.what) + "\n\n" : "") + win.t(x.why) + "."
+                               + (applied ? win.t(". Already in the profile.").substring(1) : win.t(". Click to add, then SAVE.").substring(1));
             var t = x.pct + win.t("% of ") + (x.basis === "similar" ? win.t("players with a GPU like yours") : (x.basis === "vendor" ? win.t("players with your GPU vendor") : "players"))
                     + win.t(" who say it works use it (") + x.n + win.t(" reports)");
             if (x.kind === "env" && x.unset !== undefined) t += "; " + x.unset + win.t("% leave it at the default");
