@@ -1610,6 +1610,7 @@ SUG_WHAT="$(cat <<'EOF'
   "PROTON_ENABLE_HDR": "Lets the game output HDR. Needs an HDR monitor and Wayland (PROTON_ENABLE_WAYLAND) or gamescope.",
   "DXVK_HDR": "Lets DirectX games running through DXVK see HDR. Needs an HDR monitor and Wayland or gamescope.",
   "ENABLE_HDR_WSI": "Turns on the Vulkan HDR layer (vk-hdr-layer) so HDR works on a Wayland desktop without gamescope.",
+  "WINEDLLOVERRIDES": "Which DLLs Wine takes from the game folder instead of its own. dwmapi=n,b loads UE4SS (the Unreal mod loader), which comes as a dwmapi.dll beside the game.",
   "SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT": "The game (through Wine/SDL) only sees Steam's virtual controller, the one Steam Input drives, and ignores the pad's own device: no double or mixed-up controller (e.g. a DualSense with mods).",
   "SteamDeck": "Makes the game believe it runs on a Steam Deck: some games then pick Deck settings, a controller layout or skip their launcher.",
   "MANGOHUD": "Shows the MangoHud overlay (FPS, frame time, temperatures) in the game.",
@@ -1748,9 +1749,16 @@ cmd_gsuggest() {
 }
 # Gaming Deck's own suggestions, first and ★, for what this PC's setup needs (not from ProtonDB)
 sug_add_deck() {   # appid; ProtonDB suggestions JSON on stdin
-    local j tips="[]" m; j="$(cat)"
+    local j tips="[]" m=""; j="$(cat)"
+    have "$CRISOL" && m="$(cmd_mods "steam:$1" 2>/dev/null)"
+    # UE4SS (Unreal mod loader) comes as dwmapi.dll in the game folder: Wine needs telling to use it
+    if [[ "$(jq -r '.loader.name // ""' <<<"${m:-{\}}" 2>/dev/null)" == UE4SS ]]; then
+        tips="$(jq -c --argjson what "$SUG_WHAT" '. + [{token:"WINEDLLOVERRIDES=dwmapi=n,b", key:"WINEDLLOVERRIDES=dwmapi=n,b", var:"WINEDLLOVERRIDES",
+            kind:"env", deck:true, foryou:true, recommended:true, what:$what["WINEDLLOVERRIDES"],
+            why:"Its mod loader in Crisol is UE4SS, which loads through dwmapi.dll"}]' <<<"$tips")"
+    fi
     # mods in Crisol: a game started through a mod loader can see the controller twice (raw + Steam's)
-    if have "$CRISOL" && m="$(cmd_mods "steam:$1" 2>/dev/null)" && [[ "$(jq -r '.mods // 0' <<<"$m" 2>/dev/null)" -gt 0 ]]; then
+    if [[ "$(jq -r '.mods // 0' <<<"${m:-{\}}" 2>/dev/null)" -gt 0 ]]; then
         tips="$(jq -c --argjson what "$SUG_WHAT" '. + [{token:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000",
             key:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0x28DE/0x0000", var:"SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT",
             kind:"env", deck:true, foryou:true, recommended:true,

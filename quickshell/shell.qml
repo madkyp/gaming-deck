@@ -320,7 +320,13 @@ ShellRoot {
             fx = {}; fxConfirm = ""; if (gameView === "fx") openFx();
         }
         // is a suggestion already part of the profile being edited?
+        // WINEDLLOVERRIDES is a ;-list (ReShade and loaders share it): an entry counts on its own
+        function dllOverrides() { var v = envValue("WINEDLLOVERRIDES"); return v === null ? [] : String(v).split(";").filter(function (e) { return e; }); }
         function sugApplied(x) {
+            if (x.kind === "env" && x.token.indexOf("WINEDLLOVERRIDES=") === 0) {
+                var have = dllOverrides();
+                return x.token.substring(17).split(";").every(function (e) { return have.indexOf(e) >= 0; });
+            }
             if (x.kind === "env") return (" " + gEnv.text + " ").indexOf(" " + x.token + " ") >= 0;
             if (x.kind === "arg") return (" " + gArgs.text + " ").indexOf(" " + x.token + " ") >= 0;
             if (x.token === "gamemoderun") return gp.gamemode === true;
@@ -371,6 +377,14 @@ ShellRoot {
         // add a suggestion to the editor (saved with SAVE, never automatically)
         function applySug(x) {
             if (sugApplied(x) || x.installed === false) return;
+            if (x.kind === "env" && x.token.indexOf("WINEDLLOVERRIDES=") === 0) {
+                // merged into what's there: an entry for the same DLL is replaced, the others stay
+                var add = x.token.substring(17).split(";"), dlls = add.map(function (e) { return e.split("=")[0]; });
+                var merged = dllOverrides().filter(function (e) { return dlls.indexOf(e.split("=")[0]) < 0; }).concat(add);
+                var others = gEnv.text.split(/\s+/).filter(function (e) { return e && e.split("=")[0] !== "WINEDLLOVERRIDES"; });
+                gEnv.text = others.concat(["WINEDLLOVERRIDES=" + merged.join(";")]).join(" ");
+                return;
+            }
             if (x.kind === "env") {
                 var name = x.token.split("=")[0];
                 var rest = gEnv.text.split(/\s+/).filter(function (e) { return e && e.split("=")[0] !== name; });
