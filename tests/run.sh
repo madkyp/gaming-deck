@@ -279,7 +279,7 @@ O="$(SteamAppId=200 "$CD" run "$T/fake/game" 2>&1)"
 eq "a PREFIX program that isn't installed is skipped: the game still starts" "$O" "FOO=bar HUD=fps args=-windowed"
 mkdir -p "$T/me3dir"; printf '#!/bin/sh\necho "me3 $*"\n' > "$T/me3dir/me3"; chmod +x "$T/me3dir/me3"
 "$CD" gprofile set steam:200 'args=-skipintro' 'env=FOO=me3env' >/dev/null
-O="$(FOO= "$CD" run --profile steam:200 -- "$T/me3dir/me3" launch --game eldenring -p x.me3)"
+O="$(FOO='' "$CD" run --profile steam:200 -- "$T/me3dir/me3" launch --game eldenring -p x.me3)"
 eq "through Mod Engine 3 (Crisol), the profile's args go after its --" "$O" "me3 launch --game eldenring -p x.me3 -- -skipintro"
 "$CD" gprofile reset steam:200 >/dev/null
 eq "reset drops the custom profile" "$("$CD" gprofile get steam:200 | jq -r .custom)" false
@@ -563,7 +563,7 @@ echo 'not an image' > "$T/cover.txt"; "$CD" cover set umbral:battlenet:wow "$T/c
 eq "…and the old one stays" "$("$CD" games | jq -r '.[] | select(.key == "umbral:battlenet:wow") | .ownCover')" true
 "$CD" cover clear umbral:battlenet:wow >/dev/null
 eq "cover clear: back to the game's own" "$("$CD" games | jq -c '.[] | select(.key == "umbral:battlenet:wow") | [.ownCover, .cover]')" '[null,""]'
-eq "…and its file is gone" "$(ls "$HOME/.local/share/gaming-deck/gaming/covers" | grep -vc '^index.json$')" 0
+eq "…and its file is gone" "$(find "$HOME/.local/share/gaming-deck/gaming/covers" -type f ! -name index.json | wc -l)" 0
 printf '%s\t%s\t%s\t%s\t%s\n' "2026-10-01 10:00:00" play umbral "umbral:1484d426be" ok "2026-10-01 10:01:00" "reshade on" gaming "steam:100 dxgi" ok \
     "2026-10-01 10:02:00" "steam launch on" steam 100 ok "2026-10-01 10:03:00" install appimage "steam:x.AppImage" ok >> "$HF"
 eq "history: game keys show the game's name (Umbral, Steam key + extra, bare Steam id)" \
