@@ -555,6 +555,15 @@ cat > "$T/umbral.json" <<EOF
 EOF
 G="$("$CD" games)"
 HF="$HOME/.local/share/gaming-deck/history.tsv"; cp "$HF" "$HF.bak" 2>/dev/null || :
+# a cover of your own (an Umbral game with none): its key has ":" and "_" that a file name can't carry back
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' | base64 -d > "$T/cover.png"
+"$CD" cover set umbral:battlenet:wow "$T/cover.png" >/dev/null
+eq "cover set: the game shows it in the library" "$("$CD" games | jq -c '.[] | select(.key == "umbral:battlenet:wow") | [.ownCover, (.cover | test("/covers/"))]')" '[true,true]'
+echo 'not an image' > "$T/cover.txt"; "$CD" cover set umbral:battlenet:wow "$T/cover.txt" >/dev/null 2>&1; eq "…only an image is taken" "$?" 2
+eq "…and the old one stays" "$("$CD" games | jq -r '.[] | select(.key == "umbral:battlenet:wow") | .ownCover')" true
+"$CD" cover clear umbral:battlenet:wow >/dev/null
+eq "cover clear: back to the game's own" "$("$CD" games | jq -c '.[] | select(.key == "umbral:battlenet:wow") | [.ownCover, .cover]')" '[null,""]'
+eq "…and its file is gone" "$(ls "$HOME/.local/share/gaming-deck/gaming/covers" | grep -vc '^index.json$')" 0
 printf '%s\t%s\t%s\t%s\t%s\n' "2026-10-01 10:00:00" play umbral "umbral:1484d426be" ok "2026-10-01 10:01:00" "reshade on" gaming "steam:100 dxgi" ok \
     "2026-10-01 10:02:00" "steam launch on" steam 100 ok "2026-10-01 10:03:00" install appimage "steam:x.AppImage" ok >> "$HF"
 eq "history: game keys show the game's name (Umbral, Steam key + extra, bare Steam id)" \
@@ -654,6 +663,29 @@ rm -f "$T/crisol.log"; "$CD" mplay steam:100 >/dev/null
 has "mplay plays through Crisol" "$(cat "$T/crisol.log")" "crisol --play steam:100"
 "$CD" mplay steam:5 >/dev/null 2>&1; eq "…Crisol refuses → 3" "$?" 3
 GAMING_DECK_CRISOL=crisol-missing "$CD" mopen steam:100 >/dev/null 2>&1; eq "mopen without Crisol → 4" "$?" 4
+# apply (with a profile) and look for updates, through Crisol's command line
+stub crisol 'echo "crisol $* LD=${LD_LIBRARY_PATH:-none}" >> "'"$T"'/crisol.log"
+case "$1" in
+  --apply) case "$4" in Nope) echo "{\"ok\":false,\"error\":\"no such profile\"}"; exit 2 ;; Busy) echo "{\"ok\":false,\"running\":true}"; exit 3 ;; esac
+           echo "{\"ok\":true,\"profile\":\"${4:-Main}\",\"placed\":7,\"method\":\"perfil ME3\",\"notes\":[\"a note\"]}" ;;
+  --check-updates) echo "{\"$2\":{\"name\":\"G\",\"updates\":2,\"mods\":[\"Mod A\",\"Mod B\"]}}" ;;
+  --export) echo "{\"mods\":[{\"name\":\"Mod A\",\"version\":\"1.0\",\"enabled\":true,\"uid\":\"ab12\"},{\"name\":\"Mod B\",\"enabled\":false}]}" ;;
+  --enable|--disable) [ "$3" = ab12 ] || { echo "{\"ok\":false,\"error\":\"no such mod\"}"; exit 2; }
+                      echo "{\"ok\":true,\"uid\":\"ab12\",\"name\":\"Mod A\",\"enabled\":$([ "$1" = --enable ] && echo true || echo false)}" ;;
+esac'
+rm -f "$T/crisol.log"; O="$(LD_LIBRARY_PATH=/steam/libs "$CD" mapply steam:100 Convergence 2>&1)"
+has "mapply applies through Crisol with the chosen profile" "$(cat "$T/crisol.log")" "crisol --apply steam:100 --profile Convergence LD=none"
+has "…and says what it did" "$O" "Mods applied · profile Convergence · 7 file(s) (perfil ME3)"
+"$CD" mapply steam:100 Nope >/dev/null 2>&1; eq "…a profile Crisol doesn't have → 2" "$?" 2
+O="$("$CD" mapply steam:100 Busy 2>&1)"; eq "…the game is open → 3, nothing touched" "$?" 3
+has "…and says to close it" "$O" "close it to apply the mods"
+eq "mcheck: updates of that game from Nexus" "$("$CD" mcheck steam:100 | jq -c '[.updates, .mods]')" '[2,["Mod A","Mod B"]]'
+eq "mlist: its mods in load order, on/off (uid when Crisol gives it)" "$("$CD" mlist steam:100)" '[{"name":"Mod A","version":"1.0","enabled":true,"uid":"ab12"},{"name":"Mod B","version":"","enabled":false}]'
+rm -f "$T/crisol.log"; O="$("$CD" mtoggle steam:100 ab12 off 2>&1)"
+has "mtoggle switches a mod through Crisol" "$(cat "$T/crisol.log")" "crisol --disable steam:100 ab12"
+has "…and says APPLY puts it in" "$O" "Off: Mod A"
+"$CD" mtoggle steam:100 zz99 on >/dev/null 2>&1; eq "…a mod Crisol doesn't have → 2" "$?" 2
+"$CD" mtoggle steam:100 ab12 maybe >/dev/null 2>&1; eq "…only on or off" "$?" 2
 rm -f "$T/bin/crisol"
 # CHECK FOR THIS PC: an Umbral game's other-vendor variable is removed through Umbral
 stub umbral 'echo "umbral $*" >> "'"$T"'/umbral.log"; exit 0'
@@ -1129,6 +1161,9 @@ export GAMING_DECK_STEAM_ROOT="$GST" GAMING_DECK_GH_API="file://$GE/api"
 eq "no GE installed → nothing offered" "$(GAMING_DECK_STEAM_ROOT="$HOME/none" bash -c 'source "$1"; upd_proton' _ "$CD")" ""
 eq "newer GE offered" "$(bash -c 'source "$1"; upd_proton' _ "$CD" | paste -sd '|')" "proton|GE-Proton12-1|GE-Proton|GE-Proton11-7|GE-Proton12-1"
 eq "proton status: installed, latest, update" "$("$CD" proton status | jq -c '[.installed, .latest, .update]')" '["GE-Proton11-7","GE-Proton12-1",true]'
+mkdir -p "$HOME/.local/share/umbral/runners/GE-Proton10-3"
+eq "…and a GE-Proton only Umbral has (Steam can't use it) is named apart" "$("$CD" proton status | jq -r .umbralOnly)" GE-Proton10-3
+rm -rf "$HOME/.local/share/umbral/runners"
 "$CD" proton install GE-Proton12-1 >/dev/null 2>&1
 yes "installed next to the old one (x86_64 build, checksum ok)" "[[ -f '$GST/compatibilitytools.d/GE-Proton12-1-x86_64/proton' && -d '$GST/compatibilitytools.d/GE-Proton11-7-x86_64' ]]"
 eq "…then up to date" "$(bash -c 'source "$1"; upd_proton' _ "$CD")" ""

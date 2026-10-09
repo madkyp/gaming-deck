@@ -135,6 +135,10 @@ ShellRoot {
         property var    games: []
         property var    ioInfo: ({})        // the selected game's disk + I/O scheduler (IO PRIORITY)
         property var    mods: ({})          // the selected game's mods in Crisol ({} = no Crisol / not there)
+        property string modsProfileSel: ""  // profile picked in the MODS card ("" = the active one)
+        property var    modsCheck: ({})     // last LOOK FOR UPDATES answer for this game
+        property var    modsList: []        // the game's mods (name, version, on/off), in load order
+        onModsChanged: modsProfileSel = ""
         property var    uopts: ({})         // an Umbral game's options (Umbral 0.12+: umbral --get); {} = read-only
         function uset(args) { runGame(["uset", selGame].concat(args), "SAVING…"); }
         // the variables of an Umbral game as "A=1 B=2" ↔ the env.X=… arguments that turn one into the other
@@ -314,7 +318,7 @@ ShellRoot {
             ups = {}; if (g.source === "steam") upsProc.running = true;
             ioInfo = {}; if (g.source === "steam" || g.source === "umbral") { ioProc.command = [scriptPath, "iosched", g.key]; ioProc.running = true; }
             uopts = {}; if (g.source === "umbral") uoptsProc.running = true;
-            mods = {}; if (g.source === "steam" || g.source === "umbral") modsProc.running = true;
+            mods = {}; modsCheck = {}; modsList = []; if (g.source === "steam" || g.source === "umbral") modsProc.running = true;
             sug = {}; sugExpanded = false; if (g.source === "steam") sugProc.running = true;
             if (g.new) { seenProc.command = [scriptPath, "gseen", g.key]; seenProc.running = true; }
             fx = {}; fxConfirm = ""; if (gameView === "fx") openFx();
@@ -466,6 +470,8 @@ ShellRoot {
             stdout: StdioCollector {
                 onStreamFinished: {
                     try { win.games = JSON.parse(text); } catch (e) { win.games = []; }
+                    // the open game's page follows a reload (e.g. a new cover)
+                    if (win.selGame) { var cur = win.games.filter(function (x) { return x.key === win.selGame; })[0]; if (cur) win.selGameObj = cur; }
                     if (win.fxScan.length === 0 && !fxScanProc.running) { fxScanProc.cached = true; fxScanProc.running = true; }
                     if (!gauditProc.running) gauditProc.running = true;
                     win.gameStatus = win.games.length + " GAMES";
@@ -551,6 +557,11 @@ ShellRoot {
                 if (win.gameArgs[0] === "fx" && win.fxScope === "library") { fxScanProc.cached = false; fxScanProc.running = true; }
                 if (win.selGame) gprofProc.running = true;
                 if (["clean", "proton", "gaming-import", "export"].indexOf(win.gameArgs[0]) >= 0) { protonProc.running = true; gcleanProc.running = true; }
+                if (win.gameArgs[0] === "mtoggle") modsProc.running = true;
+                if (win.gameArgs[0] === "mapply") {
+                    modsProc.running = true;
+                    if (c === 3) win.gameStatus = "CLOSE THE GAME FIRST";
+                }
                 if (win.gameArgs[0] === "selfupdate") { versionProc.running = true; selfcheckProc.running = true; }
             }
         }
@@ -668,7 +679,30 @@ ShellRoot {
         Process {
             id: modsProc
             command: [win.scriptPath, "mods", win.selGame]
-            stdout: StdioCollector { onStreamFinished: { try { win.mods = JSON.parse(text); } catch (e) { win.mods = {}; } } }
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    try { win.mods = JSON.parse(text); } catch (e) { win.mods = {}; }
+                    if (win.mods.mods) { modsListProc.command = [win.scriptPath, "mlist", win.selGame]; modsListProc.running = true; }
+                    else win.modsList = [];
+                }
+            }
+        }
+        Process {
+            id: modsListProc
+            stdout: StdioCollector { onStreamFinished: { try { win.modsList = JSON.parse(text); } catch (e) { win.modsList = []; } } }
+        }
+        // looking on Nexus takes seconds: its own process, the deck stays usable meanwhile
+        Process {
+            id: modsCheckProc
+            property string forGame: ""
+            command: [win.scriptPath, "mcheck", forGame]
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    var r = {}; try { r = JSON.parse(text); } catch (e) { r = { error: "?" }; }
+                    if (modsCheckProc.forGame !== win.selGame) return;
+                    win.modsCheck = r; modsProc.running = true;
+                }
+            }
         }
         Process {
             id: uoptsProc
@@ -796,6 +830,11 @@ ShellRoot {
             id: gcleanProc
             command: [win.scriptPath, "cleanscan"]
             stdout: StdioCollector { onStreamFinished: { try { win.gclean = JSON.parse(text); } catch (e) { win.gclean = []; } } }
+        }
+        Process {
+            id: coverPickProc
+            command: [win.scriptPath, "pickfile", win.t("Choose a cover image"), "@downloads", "Images | *.png *.jpg *.jpeg *.webp"]
+            stdout: StdioCollector { onStreamFinished: { var p = text.trim(); if (p) win.runGame(["cover", "set", win.selGame, p], win.t("SAVING…")); } }
         }
         Process {
             id: importPickProc
@@ -1460,6 +1499,24 @@ ShellRoot {
                                 anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 14
                                 label: "←  " + win.t("LIBRARY"); onClicked: win.gameView = "library"
                             }
+                            // the library cover: one of your own (e.g. an Umbral game without one), or back to the original
+                            Row {
+                                anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14; spacing: 6
+                                Chip {
+                                    label: win.t("SteamGridDB ↗"); tip: win.t("Covers made by players: download one, then CHANGE COVER")
+                                    onClicked: Qt.openUrlExternally("https://www.steamgriddb.com/search/grids?term=" + encodeURIComponent(win.selGameName))
+                                }
+                                Chip {
+                                    label: win.t("CHANGE COVER"); on: !win.gameBusy && !coverPickProc.running
+                                    tip: win.t("Pick an image (PNG, JPEG or WebP; portrait, like 600×900) for this game in the library")
+                                    onClicked: coverPickProc.running = true
+                                }
+                                Chip {
+                                    visible: heroBox.g.ownCover === true; label: "✕"; tint: pal.bad; on: !win.gameBusy
+                                    tip: win.t("Back to the game's own cover")
+                                    onClicked: win.runGame(["cover", "clear", win.selGame], win.t("SAVING…"))
+                                }
+                            }
                             ColumnLayout {
                                 anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 22
                                 width: parent.width * 0.6; spacing: 10
@@ -1636,31 +1693,122 @@ ShellRoot {
                         visible: win.mods.layout !== undefined
                         implicitHeight: modsRow.implicitHeight + 20
                         radius: 8; color: pal.card; border.color: pal.border; border.width: 1
-                        RowLayout {
+                        ColumnLayout {
                             id: modsRow
-                            anchors.fill: parent; anchors.margins: 10; spacing: 10
-                            Text { text: win.t("MODS"); Layout.preferredWidth: 52; color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 1 }
-                            Text {
-                                Layout.fillWidth: true; wrapMode: Text.WordWrap
-                                color: pal.text; font.family: win.mono; font.pixelSize: 11
-                                property var ld: win.mods.loader || {}
-                                // older Crisol (< 0.2) lists only mods/applied: show what there is
-                                text: !win.mods.mods ? win.t("No mods yet (Crisol)")
-                                      : (win.mods.enabled !== undefined && win.mods.enabled !== null ? win.mods.enabled + "/" : "")
-                                        + win.mods.mods + win.t(" mods on")
-                                        + (win.mods.profile ? "  ·  " + win.mods.profile : "")
-                                        + (win.mods.applied ? "" : "  ·  " + win.t("not applied"))
-                                        + (win.mods.pending_changes ? "  ·  " + win.t("changes to apply") : "")
-                                        + (win.mods.updates ? "  ·  " + win.mods.updates + win.t(" updates") : "")
-                                        + (ld.level === "required" && !ld.installed ? "  ·  ⚠ " + win.t("missing loader: ") + ld.name : "")
+                            anchors.fill: parent; anchors.margins: 10; spacing: 8
+                            property var ld: win.mods.loader || {}
+                            property var profs: win.mods.profiles || []
+                            property string pick: win.modsProfileSel || win.mods.profile || ""
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 8
+                                Text { text: win.t("MODS"); Layout.preferredWidth: 52; color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 1 }
+                                Text {
+                                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                    color: pal.text; font.family: win.mono; font.pixelSize: 11
+                                    // older Crisol (< 0.2) lists only mods/applied: show what there is
+                                    text: !win.mods.mods ? win.t("No mods yet (Crisol)")
+                                          : (win.mods.enabled !== undefined && win.mods.enabled !== null ? win.mods.enabled + "/" : "")
+                                            + win.mods.mods + win.t(" mods on")
+                                            + (win.mods.profile ? "  ·  " + win.mods.profile : "")
+                                            + (win.mods.applied ? "" : "  ·  " + win.t("not applied"))
+                                            + (modsRow.ld.level === "required" && !modsRow.ld.installed ? "  ·  ⚠ " + win.t("missing loader: ") + modsRow.ld.name : "")
+                                }
+                                // what needs a look: newer mod versions, a game Steam updated, changes not applied yet
+                                Chip {
+                                    visible: (win.mods.updates || 0) > 0; label: "↑ " + win.mods.updates; tint: pal.amber; active: true
+                                    tip: win.t("Mods with a newer version on Nexus: update them in Crisol") + ((win.modsCheck.mods || []).length ? "\n" + win.modsCheck.mods.join("\n") : "")
+                                    onClicked: win.runGame(["mopen", win.selGame], "OPENING…")
+                                }
+                                Chip {
+                                    visible: win.mods.game_updated === true; label: win.t("⚠ GAME UPDATED"); tint: pal.amber; active: true
+                                    tip: win.t("Steam updated the game after the mods were applied: check in Crisol that they still work with this version")
+                                    onClicked: win.runGame(["mopen", win.selGame], "OPENING…")
+                                }
+                                Chip {
+                                    visible: win.mods.pending_changes === true; label: win.t("CHANGES TO APPLY"); tint: pal.amber; active: true
+                                    tip: win.t("Mods were switched on or off in Crisol and not applied yet: APPLY puts them in")
+                                }
                             }
-                            MiniBtn {
-                                label: win.t("PLAY WITH MODS"); visible: (win.mods.enabled !== undefined && win.mods.enabled !== null ? win.mods.enabled : win.mods.mods || 0) > 0
-                                on: !win.gameBusy; onClicked: win.runGame(["mplay", win.selGame], "LAUNCHING…")
+                            // each mod: ✓ on / dimmed off in this profile, ↑ when the last check found a newer version
+                            Flow {
+                                Layout.fillWidth: true; Layout.leftMargin: 60; spacing: 5
+                                visible: win.modsList.length > 0
+                                Repeater {
+                                    model: win.modsList
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        property bool upd: (win.modsCheck.mods || []).indexOf(modelData.name) >= 0
+                                        implicitWidth: mlTxt.implicitWidth + 14; implicitHeight: 22; radius: 5
+                                        color: "transparent"; border.width: 1
+                                        border.color: upd ? pal.amber : (modelData.enabled ? pal.border : Qt.rgba(1, 1, 1, 0.06))
+                                        opacity: modelData.enabled ? 1 : 0.5
+                                        Text {
+                                            id: mlTxt; anchors.centerIn: parent
+                                            text: (upd ? "↑ " : modelData.enabled ? "✓ " : "○ ") + modelData.name + (modelData.version ? "  " + modelData.version : "")
+                                            color: upd ? pal.amber : (modelData.enabled ? pal.text : pal.dim); font.family: win.mono; font.pixelSize: 10
+                                        }
+                                        // with a uid (Crisol ≥ 0.3.0-22) a click switches it in the profile; APPLY puts it in the game
+                                        property bool canToggle: !!modelData.uid
+                                        MouseArea {
+                                            id: mlMa; anchors.fill: parent; hoverEnabled: true
+                                            cursorShape: parent.canToggle ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            enabled: !win.gameBusy || !parent.canToggle
+                                            onClicked: if (parent.canToggle) win.runGame(["mtoggle", win.selGame, modelData.uid, modelData.enabled ? "off" : "on"],
+                                                                                         modelData.enabled ? win.t("SWITCHING OFF…") : win.t("SWITCHING ON…"))
+                                        }
+                                        Tip { visible: mlMa.containsMouse
+                                              text: (upd ? win.t("A newer version is on Nexus: update it in Crisol") + "\n" : "")
+                                                    + (modelData.enabled ? win.t("On in this profile") : win.t("Off in this profile"))
+                                                    + (parent.canToggle ? (modelData.enabled ? win.t(" · click to switch it off") : win.t(" · click to switch it on"))
+                                                                          + win.t(", then APPLY") : "") }
+                                    }
+                                }
                             }
-                            MiniBtn {
-                                label: win.t("OPEN IN CRISOL"); primary: false
-                                on: !win.gameBusy; onClicked: win.runGame(["mopen", win.selGame], "OPENING…")
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 6
+                                visible: !!win.mods.mods
+                                Text { text: win.t("PROFILE"); Layout.preferredWidth: 52; color: pal.dim; font.family: win.mono; font.pixelSize: 9; font.letterSpacing: 1; visible: modsRow.profs.length > 0 }
+                                Repeater {
+                                    model: modsRow.profs
+                                    delegate: Chip {
+                                        required property var modelData
+                                        label: modelData; active: modsRow.pick === modelData; implicitHeight: 24
+                                        tip: modelData === win.mods.profile ? win.t("The profile in use") : win.t("Pick it, then APPLY")
+                                        onClicked: win.modsProfileSel = modelData
+                                    }
+                                }
+                                MiniBtn {
+                                    height: 28; label: win.t("APPLY")
+                                    // a different profile picked, or changes waiting
+                                    on: !win.gameBusy && (modsRow.pick !== (win.mods.profile || "") || win.mods.pending_changes === true || win.mods.applied === false)
+                                    onClicked: win.runGame(["mapply", win.selGame].concat(modsRow.pick && modsRow.pick !== win.mods.profile ? [modsRow.pick] : []),
+                                                           win.t("APPLYING MODS…"))
+                                }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                    visible: modsCheckProc.running || win.modsCheck.error !== undefined || win.modsCheck.updates === 0
+                                    color: win.modsCheck.error !== undefined ? pal.bad : pal.dim; font.family: win.mono; font.pixelSize: 9
+                                    text: modsCheckProc.running ? win.t("asking Nexus…")
+                                          : win.modsCheck.error !== undefined ? win.t("✗ couldn't check: ") + win.modsCheck.error
+                                          : win.t("✓ all up to date")
+                                }
+                                MiniBtn {
+                                    height: 28; primary: false; label: win.t("LOOK FOR UPDATES"); on: !modsCheckProc.running
+                                    onClicked: { win.modsCheck = {}; modsCheckProc.forGame = win.selGame; modsCheckProc.running = true; }
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 6
+                                Item { Layout.fillWidth: true }
+                                MiniBtn {
+                                    label: win.t("PLAY WITH MODS"); visible: (win.mods.enabled !== undefined && win.mods.enabled !== null ? win.mods.enabled : win.mods.mods || 0) > 0
+                                    on: !win.gameBusy; onClicked: win.runGame(["mplay", win.selGame], "LAUNCHING…")
+                                }
+                                // the way to update mods (without Premium it goes through Nexus' page): stands out when there's something to do
+                                MiniBtn {
+                                    label: win.t("OPEN IN CRISOL"); primary: (win.mods.updates || 0) > 0 || win.mods.game_updated === true; tint: pal.amber
+                                    on: !win.gameBusy; onClicked: win.runGame(["mopen", win.selGame], "OPENING…")
+                                }
                             }
                         }
                     }
@@ -4095,7 +4243,7 @@ ShellRoot {
                                     Text { text: "GE-PROTON"; color: pal.text; font.family: win.mono; font.pixelSize: 12; font.bold: true; font.letterSpacing: 3 }
                                     Text {
                                         Layout.fillWidth: true; color: pal.dim; font.family: win.mono; font.pixelSize: 11
-                                        text: (win.proton.installed ? win.t("installed: ") + win.proton.installed : win.t("not installed"))
+                                        text: (win.proton.installed ? win.t("installed: ") + win.proton.installed : win.t("not installed in Steam"))
                                               + (win.proton.latest ? win.t("  ·  latest: ") + win.proton.latest : "")
                                     }
                                     MiniBtn {
@@ -4108,6 +4256,16 @@ ShellRoot {
                                 Text {
                                     Layout.fillWidth: true; wrapMode: Text.WordWrap; color: pal.dim; font.family: win.mono; font.pixelSize: 10
                                     text: win.t("Proton with extra game fixes, and the FSR 4 / DLSS / XeSS upgrades of UPSCALE. Checksum-verified; restart Steam to see it.")
+                                }
+                                // what there is instead: Steam's other Protons, and one only Umbral has (Steam can't use it)
+                                Text {
+                                    Layout.fillWidth: true; wrapMode: Text.WordWrap; font.family: win.mono; font.pixelSize: 10
+                                    visible: !win.proton.installed && ((win.proton.steamOthers || []).length > 0 || !!win.proton.umbralOnly)
+                                    color: pal.text
+                                    text: ((win.proton.steamOthers || []).length ? win.t("Steam has: ") + win.proton.steamOthers.join(", ")
+                                            + ((win.proton.steamOthers || []).some(function (n) { return /CachyOS/.test(n); }) ? win.t(" (Proton-CachyOS already brings the FSR 4 / DLSS / XeSS upgrades)") : "") : "")
+                                          + (win.proton.umbralOnly ? ((win.proton.steamOthers || []).length ? ".  " : "") + win.proton.umbralOnly
+                                             + win.t(" is in Umbral's own folder: Umbral uses it, Steam can't.") : "")
                                 }
                             }
                         }

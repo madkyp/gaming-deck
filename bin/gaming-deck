@@ -1290,27 +1290,78 @@ cmd_uset() {
 CRISOL="${GAMING_DECK_CRISOL:-crisol}"   # the tests point it elsewhere: this PC may have the real one
 # mods steam:<id>|umbral:<id> — the game's mods in Crisol (github.com/madkyp/crisol-app):
 # {mods, enabled, profile, applied, pending_changes, updates, layout, loader}; {} without Crisol or that game
+# Crisol's command line, never with Steam's runtime libraries (an old GLib there breaks it)
+crisol_cli() { env -u LD_LIBRARY_PATH -u LD_PRELOAD "$CRISOL" "$@"; }
 cmd_mods() {
     local key="$1"
     [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mods steam:<id>|umbral:<id>"; return 2; }
     have "$CRISOL" || { echo '{}'; return 0; }
-    "$CRISOL" --list 2>/dev/null | jq -c --arg k "$key" \
-        'first(.[] | select(.key == $k) | {mods, enabled, profile, applied, pending_changes, updates, layout, loader}) // {}' \
+    crisol_cli --list 2>/dev/null | jq -c --arg k "$key" \
+        'first(.[] | select(.key == $k) | {mods, enabled, profile, profiles, applied, pending_changes, updates, updates_checked,
+                                          game_updated, layout, loader}) // {}' \
         2>/dev/null || echo '{}'
+}
+# mlist key — the game's mods in Crisol, in load order: [{name, version, enabled}] (Crisol's --export)
+cmd_mlist() {
+    local key="$1"
+    [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mlist steam:<id>|umbral:<id>"; return 2; }
+    have "$CRISOL" || { echo '[]'; return 0; }
+    # uid: Crisol ≥ 0.3.0-22 gives it, and only then can a mod be switched from here (mtoggle)
+    crisol_cli --export "$key" 2>/dev/null | jq -c '[.mods[]? | {name, version:(.version // ""), enabled:(.enabled != false)}
+        + (if .uid then {uid} else {} end)]' 2>/dev/null \
+        || echo '[]'
+}
+# mtoggle key uid on|off — switch a mod on or off in the active profile (not applied: APPLY puts it in)
+cmd_mtoggle() {
+    local key="$1" uid="$2" on="$3" out rc
+    [[ "$key" == steam:* || "$key" == umbral:* ]] && [[ -n "$uid" && "$uid" != -* ]] && [[ "$on" == on || "$on" == off ]] \
+        || { err "use: mtoggle steam:<id>|umbral:<id> <mod uid> on|off"; return 2; }
+    have "$CRISOL" || { err "Crisol is not installed"; return 4; }
+    out="$(crisol_cli "$([[ "$on" == on ]] && echo --enable || echo --disable)" "$key" "$uid" 2>/dev/null)"; rc=$?
+    case "$rc" in
+        0) log "$(jq -r '(if .enabled then "✔ On: " else "✔ Off: " end) + (.name // "mod") + "  ·  APPLY to put it in the game"' <<<"$out" 2>/dev/null)" ;;
+        2) err "Crisol doesn't have that mod for $(game_label "$key")"; return 2 ;;
+        *) err "$(jq -r '.error // "Crisol could not change the mod"' <<<"$out" 2>/dev/null)"; return 1 ;;
+    esac
+}
+# mapply key [profile] — apply the game's mods in Crisol (switching profile first); 3 = the game is open
+cmd_mapply() {
+    local key="$1" prof="${2:-}" out rc
+    [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mapply steam:<id>|umbral:<id> [profile]"; return 2; }
+    have "$CRISOL" || { err "Crisol is not installed"; return 4; }
+    out="$(crisol_cli --apply "$key" ${prof:+--profile "$prof"} 2>/dev/null)"; rc=$?
+    case "$rc" in
+        0) log "✔ Mods applied$(jq -r '(if .profile then " · profile " + .profile else "" end)
+                + (if .placed != null then " · \(.placed) file(s)" else "" end) + (if .method then " (\(.method))" else "" end)' <<<"$out" 2>/dev/null)"
+           jq -r '.notes[]? // empty' <<<"$out" 2>/dev/null | sed 's/^/  /'
+           history_add "apply mods" crisol "$key${prof:+ $prof}" 0 ;;
+        2) err "Crisol has no profile named \"$prof\" for $(game_label "$key")"; return 2 ;;
+        3) err "$(game_label "$key") is open: close it to apply the mods"; return 3 ;;
+        *) err "$(jq -r '.error // empty' <<<"$out" 2>/dev/null || true)"; [[ -n "$out" ]] || err "Crisol could not apply the mods"; return 1 ;;
+    esac
+}
+# mcheck key — ask Nexus (through Crisol) for newer versions of the game's mods → {"updates": N, "mods": [...]}
+cmd_mcheck() {
+    local key="$1" out
+    [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mcheck steam:<id>|umbral:<id>"; return 2; }
+    have "$CRISOL" || { echo '{"error":"Crisol is not installed"}'; return 4; }
+    out="$(timeout 120 env -u LD_LIBRARY_PATH -u LD_PRELOAD "$CRISOL" --check-updates "$key" 2>/dev/null)"
+    jq -c --arg k "$key" 'if .error then {error} else (.[$k] // {updates:0, mods:[]}) end' <<<"$out" 2>/dev/null \
+        || echo '{"error":"no answer from Crisol"}'
 }
 # mopen key — open the game's page in Crisol; mplay key — play it with its mods (crisol --play)
 cmd_mopen() {
     local key="$1"
     [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mopen steam:<id>|umbral:<id>"; return 2; }
     have "$CRISOL" || { err "Crisol is not installed"; return 4; }
-    setsid -f "$CRISOL" --game "$key" >/dev/null 2>&1
+    setsid -f env -u LD_LIBRARY_PATH -u LD_PRELOAD "$CRISOL" --game "$key" >/dev/null 2>&1
     log "▶ Crisol: $(game_label "$key")"
 }
 cmd_mplay() {
     local key="$1" out
     [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mplay steam:<id>|umbral:<id>"; return 2; }
     have "$CRISOL" || { err "Crisol is not installed"; return 4; }
-    out="$("$CRISOL" --play "$key" 2>&1)" || { err "${out:-Crisol could not start the game}"; return 3; }
+    out="$(crisol_cli --play "$key" 2>&1)" || { err "${out:-Crisol could not start the game}"; return 3; }
     log "▶ Playing with mods: $(game_label "$key")"; history_add "play with mods" crisol "$key" 0
 }
 
@@ -1376,10 +1427,52 @@ cmd_games() {
          profile:($profs | has("steam:" + $l[$i])),
          cover:$l[$i+8], hero:$l[$i+9], logo:$l[$i+10],
          new:(($known != null) and (($known | index("steam:" + $l[$i])) == null))}]' \
-    | jq -c --argjson u "$(umbral_games)" --argjson known "$(known_games_json)" '
+    | jq -c --argjson u "$(umbral_games)" --argjson known "$(known_games_json)" --argjson own "$(covers_json)" '
         . + ($u | map(. as $g | $g + {profile:false, new:(($known != null) and (($known | index($g.key)) == null))}))
+        # a cover the user picked wins over Steam'"'"'s and Umbral'"'"'s
+        | map(if $own[.key] then . + {cover:$own[.key], ownCover:true} else . end)
         | sort_by(.name | ascii_downcase)' \
     | tee >(jq -r '.[].key' | known_games_init)
+}
+
+# --- covers the user picks (LIBRARY → a game → CHANGE COVER) ---------------------
+COVERS_DIR="$GAMING_DIR/covers"
+COVERS_INDEX="$COVERS_DIR/index.json"   # {key: file}: keys like umbral:battlenet:wow_x don't map back from a file name
+covers_json() {   # {key: path} of the picked covers that are still there
+    [[ -s "$COVERS_INDEX" ]] || { echo '{}'; return; }
+    local k f out=()
+    while IFS=$'\t' read -r k f; do
+        [[ -f "$COVERS_DIR/$f" ]] && out+=("$(jq -nc --arg k "$k" --arg f "$COVERS_DIR/$f" '{($k): $f}')")
+    done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' "$COVERS_INDEX" 2>/dev/null)
+    if ((${#out[@]})); then printf '%s\n' "${out[@]}" | jq -sc 'add'; else echo '{}'; fi
+}
+# cover set <key> <image> | clear <key>
+cmd_cover() {
+    local sub="$1" key="$2" f="${3:-}" mime ext name old tmp
+    valid_game_key "$key" && [[ "$key" != default ]] || { err "use: cover set <key> <image> | clear <key>"; return 2; }
+    mkdir -p "$COVERS_DIR"
+    old="$(jq -r --arg k "$key" '.[$k] // empty' "$COVERS_INDEX" 2>/dev/null)"
+    case "$sub" in
+        set)
+            [[ -f "$f" ]] || { err "not found: $f"; return 2; }
+            mime="$(file -b --mime-type -- "$f" 2>/dev/null)"
+            case "$mime" in image/png) ext=png ;; image/jpeg) ext=jpg ;; image/webp) ext=webp ;;
+                *) err "not a PNG, JPEG or WebP image: $(basename "$f")"; return 2 ;; esac
+            # a new name each time: the GUI caches images by path
+            name="$(printf '%s' "$key" | sha1sum | cut -c1-12)-$(date +%s).$ext"
+            cp -- "$f" "$COVERS_DIR/$name" || { err "couldn't copy the image"; return 4; }
+            tmp="$(mktemp)"
+            { cat "$COVERS_INDEX" 2>/dev/null || echo '{}'; } | jq --arg k "$key" --arg n "$name" '. + {($k): $n}' > "$tmp" \
+                && replace_file "$tmp" "$COVERS_INDEX"; rm -f "$tmp"
+            [[ -n "$old" && "$old" != "$name" ]] && rm -f -- "$COVERS_DIR/$old"
+            log "✔ New cover for $(game_label "$key")"; history_add "cover" gaming "$key" 0 ;;
+        clear)
+            tmp="$(mktemp)"
+            { cat "$COVERS_INDEX" 2>/dev/null || echo '{}'; } | jq --arg k "$key" 'del(.[$k])' > "$tmp" && replace_file "$tmp" "$COVERS_INDEX"; rm -f "$tmp"
+            [[ -n "$old" ]] && rm -f -- "$COVERS_DIR/$old"
+            log "✔ $(game_label "$key") shows its own cover again" ;;
+        *) err "use: cover set <key> <image> | clear <key>"; return 2 ;;
+    esac
 }
 
 # games already seen by the user (null on the very first run: nothing is "new" then)
@@ -2298,6 +2391,11 @@ Gaming
   gstop umbral:<id>             Close an Umbral game (Umbral 0.11+)
   mods <game>                   The game's mods in Crisol (count, profile, applied, updates, loader)
   mopen <game> / mplay <game>   Open the game in Crisol / play it with its mods
+  mapply <game> [profile]       Apply the game's mods in Crisol (switching profile first; 3 = the game is open)
+  mcheck <game>                 Look for newer versions of its mods on Nexus (through Crisol)
+  cover set <game> <image> | clear <game>   A cover of your own for the library (PNG, JPEG or WebP)
+  mlist <game>                  Its mods in Crisol, in load order (name, version, on/off)
+  mtoggle <game> <uid> on|off   Switch one of its mods on or off in Crisol's active profile (then mapply)
   uopts umbral:<id>             An Umbral game's options (Umbral 0.12+)
   uset umbral:<id> k=v …        Change them: gamemode=on fps_limit=120 env.NAME=value (env.NAME= removes)
   sessions [N|on|off]           Last game sessions (temps, load, power) · turn the end-of-game summary on/off
@@ -4855,8 +4953,14 @@ upd_proton() {
 cmd_proton_status() {
     local cur tag
     cur="$(ge_installed)"; tag="$(ge_latest_json | jq -r '.tag_name // empty')"
+    # what else there is: Steam's other Protons, and a GE-Proton that only Umbral has (Steam can't use that one)
+    local others umb
+    others="$(cmd_compattools 2>/dev/null | jq -c '[.[] | .display // .name | select(test("GE-Proton") | not)]' 2>/dev/null)"; [[ -n "$others" ]] || others='[]'
+    umb="$(find "$DATA_HOME/umbral/runners" -maxdepth 1 -type d -name 'GE-Proton*' -printf '%f\n' 2>/dev/null | sort -V | tail -1)"
     jq -nc --arg c "${cur%-x86_64}" --arg l "$tag" --argjson u "$([[ -n "$(upd_proton)" ]] && echo true || echo false)" \
-        '{installed:(if $c == "" then null else $c end), latest:(if $l == "" then null else $l end), update:$u}'
+        --argjson o "$others" --arg umb "$umb" \
+        '{installed:(if $c == "" then null else $c end), latest:(if $l == "" then null else $l end), update:$u,
+          steamOthers:$o, umbralOnly:(if $umb == "" then null else $umb end)}'
 }
 cmd_proton_install() {
     local tag="${1:-}" rel asset sum dir tmp top
@@ -5442,6 +5546,11 @@ main() {
         mods)        cmd_mods "${1:-}" ;;
         mopen)       cmd_mopen "${1:-}" ;;
         mplay)       cmd_mplay "${1:-}" ;;
+        mapply)      cmd_mapply "${1:-}" "${2:-}" ;;
+        mlist)       cmd_mlist "${1:-}" ;;
+        mtoggle)     cmd_mtoggle "${1:-}" "${2:-}" "${3:-}" ;;
+        cover)       cmd_cover "${1:-}" "${2:-}" "${3:-}" ;;
+        mcheck)      cmd_mcheck "${1:-}" ;;
         uopts)       cmd_uopts "${1:-}" ;;
         uset)        cmd_uset "$@" ;;
         iosched)     cmd_iosched "${1:-}" ;;

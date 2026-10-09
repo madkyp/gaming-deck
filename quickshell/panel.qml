@@ -210,7 +210,29 @@ ShellRoot {
         shown = true;
         focusTimer.restart();
     }
-    function hide() { shown = false; saveNotes(); }
+    function hide() { shown = false; saveNotes(); cursorBack(); }
+
+    // ---- the pointer: a game often keeps it captured, so the panel opens under it and gives it back ----
+    property string cursorWas: ""          // "x, y" before the panel opened
+    function cursorTo(x, y) { cursorMove.command = ["hyprctl", "dispatch", "hl.dsp.cursor.move({x = " + Math.round(x) + ", y = " + Math.round(y) + "})"]; cursorMove.running = true; }
+    function cursorBack() {
+        var m = /^(-?\d+),\s*(-?\d+)$/.exec(cursorWas.trim()); cursorWas = "";
+        if (m) cursorTo(+m[1], +m[2]);
+    }
+    Process { id: cursorMove }
+    Process {
+        id: cursorPos
+        command: ["hyprctl", "cursorpos"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (!root.shown) return;
+                root.cursorWas = text.trim();
+                var s = win.screen;
+                // the middle of the panel, in global coordinates (it sits on the right edge of its screen)
+                if (s) root.cursorTo(s.x + s.width - 28 - win.width / 2, s.y + s.height / 2);
+            }
+        }
+    }
     function toggle() { if (shown) hide(); else show(); }
     Timer { id: focusTimer; interval: 60; onTriggered: keys.forceActiveFocus() }
 
@@ -329,7 +351,7 @@ ShellRoot {
         // the pointer), then on demand: other windows take the keyboard back with a click
         property bool grab: false
         WlrLayershell.keyboardFocus: !root.shown ? WlrKeyboardFocus.None : (grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
-        onVisibleChanged: if (visible) { grab = true; grabTimer.restart(); }
+        onVisibleChanged: if (visible) { grab = true; grabTimer.restart(); cursorPos.running = true; }
         Timer { id: grabTimer; interval: 500; onTriggered: win.grab = false }
         color: "transparent"
 
