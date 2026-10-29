@@ -241,6 +241,17 @@ eq "off restores the original options" "$(bash -c 'source "$1"; vdf_get "$2" Use
 "$CD" steamwrap 200 off >/dev/null
 hasnt "off removes options that weren't there" "$(cat "$LC")" "gaming-deck run"
 eq "file still has balanced braces" "$(grep -c '{' "$LC")" "$(grep -c '}' "$LC")"
+# steamapply: with Steam open it says so (3); --close shuts it down cleanly, applies, starts it again
+GAMING_DECK_STEAM_RUNNING=1 "$CD" steamapply 200 wrap=on >/dev/null 2>&1; eq "steamapply: Steam open → 3, nothing written" "$?" 3
+hasnt "…its launch options untouched" "$(cat "$LC")" "gaming-deck run"
+rm -f "$T/steam.log"; GAMING_DECK_STEAM_RUNNING=1 "$CD" steamapply 200 wrap=on --close >/dev/null 2>&1; eq "…--close: applies" "$?" 0
+has "…launch options now go through the deck" "$(bash -c 'source "$1"; vdf_get "$2" UserLocalConfigStore/Software/Valve/Steam/apps/200 LaunchOptions' _ "$CD" "$LC")" "gaming-deck run"
+eq "…Steam was shut down cleanly, then started again" "$(paste -sd, "$T/steam.log")" "steam -shutdown,steam "
+"$CD" steamwrap 200 off >/dev/null
+mkdir -p "$T/proc-sa/4242"; printf 'SteamAppId=200\0' > "$T/proc-sa/4242/environ"; echo "/usr/bin/game.exe" > "$T/proc-sa/4242/cmdline"
+rm -f "$T/steam.log"; PROC_ROOT="$T/proc-sa" GAMING_DECK_STEAM_RUNNING=1 "$CD" steamapply 200 wrap=on --close >/dev/null 2>&1; rc=$?
+eq "…never with one of its games running (5), Steam left alone" "$rc $(cat "$T/steam.log" 2>/dev/null | wc -l)" "5 0"
+"$CD" steamapply 200 >/dev/null 2>&1; eq "…nothing to apply → 2" "$?" 2
 
 section "Gaming: Proton version per game"
 "$CD" steamcompat 200 GE-Proton9-1 >/dev/null

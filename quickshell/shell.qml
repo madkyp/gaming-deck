@@ -312,6 +312,7 @@ ShellRoot {
             loadGameView();
         }
         function selectGame(g) {
+            steamPending = null; wrapAfterSave = false;
             selGame = g.key; selGameId = g.id; selGameName = g.name; selGameSource = g.source;
             selGameLaunch = g.launch; selGameCompat = g.compat; selGameWrapped = g.wrapped; selGameObj = g;
             gameLog = ""; if (g.source === "steam" || g.source === "umbral") gprofProc.running = true;
@@ -454,13 +455,20 @@ ShellRoot {
             if (selGameSource === "steam") { pendingPlay = true; saveGameProfile(); }
             else runGame(["gplay", selGame], win.t("LAUNCHING…"));
         }
+        // what needs Steam closed (launch options, Proton) goes through steamapply; with Steam open it's
+        // kept here and the game page offers CLOSE STEAM AND APPLY
+        property var steamPending: null     // {args, label}
+        function steamDo(args, label) { steamPending = null; runGame(["steamapply", selGameId].concat(args), label); }
         function saveGameProfile() {
             runGame(["gprofile", "set", selGame,
                      "gamemode=" + (gp.gamemode === true), "mangohud=" + (gp.mangohud === true),
                      "overlay=" + (gp.overlay === true), "ionice=" + (gp.ionice === true), "nice=" + (gp.nice || 0),
                      "env=" + gEnv.text.trim(), "prefix=" + gPrefix.text.trim(), "args=" + gArgs.text.trim()],
                     win.t("SAVING…"));
+            // a profile only works if Steam launches the game through the deck
+            if (selGameSource === "steam" && !selGameWrapped && !pendingPlay) wrapAfterSave = true;
         }
+        property bool wrapAfterSave: false
 
 
         // ---- backend processes ------------------------------------------
@@ -558,6 +566,17 @@ ShellRoot {
                 if (win.selGame) gprofProc.running = true;
                 if (["clean", "proton", "gaming-import", "export"].indexOf(win.gameArgs[0]) >= 0) { protonProc.running = true; gcleanProc.running = true; }
                 if (win.gameArgs[0] === "mtoggle") modsProc.running = true;
+                if (win.gameArgs[0] === "gprofile" && win.gameArgs[1] === "set" && win.wrapAfterSave) {
+                    win.wrapAfterSave = false;
+                    if (c === 0) { Qt.callLater(function () { win.steamDo(["wrap=on"], win.t("WRAPPING…")); }); return; }
+                }
+                if (win.gameArgs[0] === "steamapply") {
+                    if (c === 3 && win.gameArgs.indexOf("--close") < 0) {
+                        win.steamPending = { args: win.gameArgs.slice(2), label: win.gameStatus };
+                        win.gameStatus = "STEAM IS OPEN";
+                    } else if (c === 5) win.gameStatus = "A GAME IS RUNNING";
+                    upsProc.running = true;
+                }
                 if (win.gameArgs[0] === "mapply") {
                     modsProc.running = true;
                     if (c === 3) win.gameStatus = "CLOSE THE GAME FIRST";
@@ -1341,6 +1360,28 @@ ShellRoot {
                     }
                 }
 
+                // Steam is open, and it rewrites its config when it exits: close it (cleanly), apply, start it again
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: win.steamPending !== null
+                    implicitHeight: spRow.implicitHeight + 18; radius: 8
+                    color: Qt.rgba(0.98, 0.75, 0.14, 0.08); border.color: pal.amber; border.width: 1
+                    RowLayout {
+                        id: spRow; anchors.fill: parent; anchors.margins: 9; spacing: 10
+                        Text {
+                            Layout.fillWidth: true; wrapMode: Text.WordWrap; color: pal.amber; font.family: win.mono; font.pixelSize: 11
+                            text: win.t("⚠ Steam is open: it would undo this change when it closes. Gaming Deck can close Steam, apply it and open Steam again (not while a game is running).")
+                        }
+                        MiniBtn {
+                            width: Math.max(170, implicitWidth); height: 30; label: win.t("CLOSE STEAM AND APPLY"); tint: pal.amber
+                            on: !win.gameBusy
+                            onClicked: { var p = win.steamPending; win.steamPending = null;
+                                         win.runGame(["steamapply", win.selGameId].concat(p.args).concat(["--close"]), win.t("CLOSING STEAM…")); }
+                        }
+                        MiniBtn { width: Math.max(90, implicitWidth); height: 30; label: win.t("CANCEL"); primary: false; onClicked: win.steamPending = null }
+                    }
+                }
+
                 // ---- LIBRARY ----
                 // profiles that don't fit this PC (moved from the other one via BACKUP)
                 Rectangle {
@@ -1876,7 +1917,7 @@ ShellRoot {
                                 Chip {
                                     label: win.t("STEAM DEFAULT"); active: win.selGameCompat === ""
                                     on: !win.gameBusy; tip: win.t("Steam must be closed to change it")
-                                    onClicked: win.runGame(["steamcompat", win.selGameId, "default"], win.t("SETTING PROTON…"))
+                                    onClicked: win.steamDo(["proton=default"], win.t("SETTING PROTON…"))
                                 }
                                 Repeater {
                                     model: win.tools
@@ -1884,7 +1925,7 @@ ShellRoot {
                                         required property var modelData
                                         label: modelData.display; active: win.selGameCompat === modelData.name
                                         on: !win.gameBusy; tip: win.t("Steam must be closed to change it")
-                                        onClicked: win.runGame(["steamcompat", win.selGameId, modelData.name], win.t("SETTING PROTON…"))
+                                        onClicked: win.steamDo(["proton=" + modelData.name], win.t("SETTING PROTON…"))
                                     }
                                 }
                             }
@@ -2027,10 +2068,11 @@ ShellRoot {
                         Text {
                             Layout.fillWidth: true; elide: Text.ElideRight
                             font.family: win.mono; font.pixelSize: 10
-                            color: win.selGameSource === "steam" && win.selGameWrapped ? pal.ok : pal.dim
+                            color: win.selGameSource === "steam" && win.selGameWrapped ? pal.ok : pal.amber
                             text: win.selGameSource !== "steam" ? ""
                                   : (win.selGameWrapped ? win.t("● Launched through Gaming Deck")
-                                     : win.t("○ Steam options: ") + (win.selGameLaunch || "none"))
+                                     : win.t("⚠ Steam doesn't launch it through Gaming Deck yet: the profile doesn't apply. SAVE or USE IN STEAM fixes it")
+                                       + (win.selGameLaunch ? "  ·  " + win.t("its Steam options: ") + win.selGameLaunch : ""))
                             Tip { visible: stMa.containsMouse && parent.text !== ""; text: win.selGameWrapped ? win.t("The profile applies on every launch from Steam.")
                                           : win.t("USE IN STEAM moves these options into the profile (Steam must be closed).") }
                             MouseArea { id: stMa; anchors.fill: parent; hoverEnabled: true }
@@ -2046,7 +2088,7 @@ ShellRoot {
                             visible: win.selGameSource === "steam"
                             label: win.selGameWrapped ? win.t("RESTORE STEAM") : win.t("USE IN STEAM")
                             on: !win.gameBusy
-                            onClicked: win.runGame(["steamwrap", win.selGameId, win.selGameWrapped ? "off" : "on"],
+                            onClicked: win.steamDo([win.selGameWrapped ? "wrap=off" : "wrap=on"],
                                                    win.selGameWrapped ? win.t("RESTORING…") : win.t("WRAPPING…"))
                         }
                         MiniBtn {
@@ -2603,8 +2645,8 @@ ShellRoot {
                                             MiniBtn {
                                                 visible: next && index === 2 && !win.fxUmbral
                                                 width: Math.max(120, implicitWidth); height: 28; label: win.t("USE IN STEAM")
-                                                on: !win.gameBusy && !win.fx.steamRunning
-                                                onClicked: win.runGame(["steamwrap", win.selGameId, "on"], win.t("WRAPPING…"))
+                                                on: !win.gameBusy
+                                                onClicked: win.steamDo(["wrap=on"], win.t("WRAPPING…"))
                                             }
                                             Chip {
                                                 visible: next && index === 3
@@ -2782,8 +2824,8 @@ ShellRoot {
                                         MiniBtn {
                                             visible: !win.fxUmbral
                                             width: Math.max(120, implicitWidth); height: 28; label: win.t("USE IN STEAM")
-                                            on: !win.gameBusy && !win.fx.steamRunning
-                                            onClicked: win.runGame(["steamwrap", win.selGameId, "on"], win.t("WRAPPING…"))
+                                            on: !win.gameBusy
+                                            onClicked: win.steamDo(["wrap=on"], win.t("WRAPPING…"))
                                         }
                                     }
                                 }

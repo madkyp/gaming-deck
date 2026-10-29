@@ -1101,6 +1101,40 @@ adopt_launch_options() {
 wrapper_line() { printf '%s run %%command%%' "$(gaming_deck_bin)"; }
 
 # steamwrap <appid> on|off — make Steam launch the game through the wrapper
+# steamapply <appid> [wrap=on|off] [proton=<tool|default>] [--close] — what needs Steam closed, in one go.
+# Steam rewrites its config when it exits, so with Steam open: exit 3, unless --close, which shuts Steam
+# down cleanly (never while one of its games runs), applies, and starts it again.
+cmd_steamapply() {
+    local id="$1" a wrap="" proton="" close=false restart=false rc=0 i
+    [[ "$id" =~ ^[0-9]+$ ]] || { err "use: steamapply <appid> [wrap=on|off] [proton=<tool|default>] [--close]"; return 2; }
+    shift
+    for a in "$@"; do
+        case "$a" in
+            wrap=on|wrap=off) wrap="${a#wrap=}" ;;
+            proton=?*) proton="${a#proton=}" ;;
+            --close) close=true ;;
+            *) err "steamapply: unknown argument $a"; return 2 ;;
+        esac
+    done
+    [[ -n "$wrap$proton" ]] || { err "steamapply: nothing to apply"; return 2; }
+    if steam_running; then
+        $close || { err "Steam is open: it rewrites its config when it exits"; return 3; }
+        [[ -n "$(running_games 2>/dev/null)" ]] && { err "a Steam game is running: close it first"; return 5; }
+        log "→ closing Steam…"
+        steam -shutdown >/dev/null 2>&1 &
+        for ((i = 0; i < 60; i++)); do
+            [[ -n "${GAMING_DECK_STEAM_RUNNING:-}" ]] && export GAMING_DECK_STEAM_RUNNING=0   # tests: the stub is "closed" now
+            steam_running || break; sleep 0.5
+        done
+        steam_running && { err "Steam didn't close in 30 s: close it by hand and try again"; return 4; }
+        sleep 1; restart=true   # let it finish writing its files
+    fi
+    [[ -n "$wrap" ]] && { cmd_steamwrap "$id" "$wrap" || rc=$?; }
+    [[ -n "$proton" ]] && { cmd_steamcompat "$id" "$proton" || rc=$?; }
+    if $restart; then setsid -f steam >/dev/null 2>&1; log "→ Steam started again"; fi
+    return "$rc"
+}
+
 cmd_steamwrap() {
     local id="$1" mode="$2" lc cur orig key
     [[ "$id" =~ ^[0-9]+$ ]] || { err "use: steamwrap <appid> on|off"; return 2; }
@@ -2383,6 +2417,8 @@ Gaming
   run [--profile <key>] -- cmd  Launch a game with its profile (Steam: "gaming-deck run %command%").
                                 Steam games with a Crisol ME3 profile start through ME3 (crisol --launch-command)
   steamwrap <appid> on|off      Launch a Steam game through Gaming Deck (Steam must be closed)
+  steamapply <appid> [wrap=on|off] [proton=<tool|default>] [--close]
+                                Both at once; --close shuts Steam down for it and starts it again (never mid-game)
   compattools                   Proton versions Steam can use (JSON)
   steamcompat <appid> <tool|default>   Proton version for a game (Steam must be closed)
   protondb <appid…>             ProtonDB summary per game, cached 24 h (JSON)
@@ -5536,6 +5572,7 @@ main() {
         gstatus)     cmd_gstatus ;;
         gprofile)    cmd_gprofile "$@" ;;
         run)         cmd_run "$@" ;;
+        steamapply)  cmd_steamapply "$@" ;;
         steamwrap)   cmd_steamwrap "$1" "$2" ;;
         compattools) cmd_compattools ;;
         steamcompat) cmd_steamcompat "$1" "$2" ;;
