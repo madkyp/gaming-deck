@@ -1297,6 +1297,15 @@ mv "$UP/steamapps/common/Up/bin/amd_fidelityfx_dx12.dll" "$UP/steamapps/common/U
 touch "$UP/steamapps/common/Up/bin/amd_fidelityfx_loader_dx12.dll"
 eq "…FidelityFX SDK 2 DLLs count as FSR 3.1 DX12 too" "$(UPS amd 'AMD Radeon RX 9070 XT' | jq -r .ships.fsr31dx12)" true
 rm "$UP/steamapps/common/Up/bin/amd_fidelityfx_loader_dx12.dll"; mv "$UP/steamapps/common/Up/bin/amd_fidelityfx_upscaler_dx12.dll" "$UP/steamapps/common/Up/bin/amd_fidelityfx_dx12.dll"
+# Unreal Engine 5 keeps them deep in its plugin folders (Phantom Blade Zero: 9 levels down)
+DEEP="$UP/steamapps/common/Up/Game/Plugins/FSR/Source/fidelityfx-sdk/Kits/FidelityFX/signedbin"; mkdir -p "$DEEP"
+mv "$UP/steamapps/common/Up/bin/amd_fidelityfx_dx12.dll" "$DEEP/amd_fidelityfx_upscaler_dx12.dll"
+eq "…found deep inside an Unreal plugin folder too" "$(UPS amd 'AMD Radeon RX 9070 XT' | jq -r .ships.fsr31dx12)" true
+SG8() { GAMING_DECK_STEAM_ROOT="$UP" GAMING_DECK_GPU_VENDOR="$1" GAMING_DECK_GPU_NAME="$2" GAMING_DECK_CRISOL=crisol-missing "$CD" gsuggest 8000 | jq -c '[.suggestions[]? | select(.deck) | .token]'; }
+eq "FSR 3.1 + an RX 9000 → Gaming Deck suggests the FSR 4 upgrade" "$(SG8 amd 'AMD Radeon RX 9070 XT')" '["PROTON_FSR4_UPGRADE=1"]'
+has "…saying to pick a Proton that can, when it's Steam's default" "$(GAMING_DECK_STEAM_ROOT="$UP" GAMING_DECK_GPU_VENDOR=amd GAMING_DECK_GPU_NAME='AMD Radeon RX 9070 XT' GAMING_DECK_CRISOL=crisol-missing "$CD" gsuggest 8000 | jq -r '.suggestions[0].needs')" "pick Proton-CachyOS"
+eq "…not on an NVIDIA card" "$(SG8 nvidia 'NVIDIA GeForce RTX 2070')" '[]'
+mv "$DEEP/amd_fidelityfx_upscaler_dx12.dll" "$UP/steamapps/common/Up/bin/amd_fidelityfx_dx12.dll"; rm -rf "$UP/steamapps/common/Up/Game"
 eq "Steam default Proton → no upgrades" "$(UPS amd 'AMD Radeon RX 9070 XT' | jq -r '.options[] | select(.id == "fsr4") | .why')" "This game's Proton can't do it: pick GE-Proton or Proton-CachyOS in PROTON."
 printf '"InstallConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t\t"8000"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"GE-Test"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n' > "$UP/config/config.vdf"
 eq "RX 9070 XT + GE: FSR 4 available" "$(UPS amd 'AMD Radeon RX 9070 XT' | jq -c '[.options[] | select(.id == "fsr4") | .available, .var]')" '[true,"PROTON_FSR4_UPGRADE"]'

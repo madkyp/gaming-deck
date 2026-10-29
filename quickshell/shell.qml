@@ -366,7 +366,7 @@ ShellRoot {
             return l;
         }
         function sugTip(x, applied) {
-            if (x.deck) return (x.what ? win.t(x.what) + "\n\n" : "") + win.t(x.why) + "."
+            if (x.deck) return (x.what ? win.t(x.what) + "\n\n" : "") + win.t(x.why) + "." + (x.needs ? "\n⚠ " + win.t(x.needs) + "." : "")
                                + (applied ? win.t(". Already in the profile.").substring(1) : win.t(". Click to add, then SAVE.").substring(1));
             var t = x.pct + win.t("% of ") + (x.basis === "similar" ? win.t("players with a GPU like yours") : (x.basis === "vendor" ? win.t("players with your GPU vendor") : "players"))
                     + win.t(" who say it works use it (") + x.n + win.t(" reports)");
@@ -1930,7 +1930,10 @@ ShellRoot {
                                     Layout.fillWidth: true; wrapMode: Text.WordWrap
                                     color: pal.dim; font.family: win.mono; font.pixelSize: 9
                                     // nothing applies: one line, the reasons on hover
+                                    // "nothing to upgrade" only when the game ships nothing swappable: a game with FSR 3.1 / DLSS / XeSS
+                                    // on a Proton that can't swap them says so (the "Ships…" line names what to change)
                                     property bool none: !(win.ups.options || []).some(function (o) { return o.available || o.on; })
+                                                        && !(win.ups.ships && (win.ups.ships.fsr31dx12 || win.ups.ships.fsr31vk || win.ups.ships.dlss || win.ups.ships.xess))
                                     MouseArea { id: upsMa; anchors.fill: parent; hoverEnabled: true; visible: parent.none }
                                     Tip { visible: upsMa.containsMouse; text: (win.ups.options || []).map(function (o) { return win.t(o.label) + ": " + win.t(o.why); }).join("\n") }
                                     text: !win.ups.ships ? "" : none ? win.t("No upscaler upgrade for this game ⓘ") :

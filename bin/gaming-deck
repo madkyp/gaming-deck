@@ -1844,8 +1844,21 @@ cmd_gsuggest() {
 }
 # Gaming Deck's own suggestions, first and ★, for what this PC's setup needs (not from ProtonDB)
 sug_add_deck() {   # appid; ProtonDB suggestions JSON on stdin
-    local j tips="[]" m=""; j="$(cat)"
+    local j tips="[]" m="" up; j="$(cat)"
     have "$CRISOL" && m="$(cmd_mods "steam:$1" 2>/dev/null)"
+    # FSR 4: the game ships FSR 3.1 (DX12) and this Radeon can run FSR 4 — the same rules as UPSCALE.
+    # When only the Proton is missing, the tip says to pick one that can.
+    up="$(cmd_upscale "steam:$1" 2>/dev/null)"
+    if jq -e '.ships.fsr31dx12 == true and .gpu.vendor == "amd" and (.gpu.gen == "amd:5" or .gpu.gen == "amd:4")
+              and ((.options[] | select(.id == "fsr4") | .why) as $w | $w == null or ($w | test("Proton can")))' <<<"$up" >/dev/null 2>&1; then
+        tips="$(jq -c --argjson up "$up" --argjson what "$SUG_WHAT" '
+            ($up.options[] | select(.id == "fsr4")) as $o
+            | ($o.var // "PROTON_FSR4_UPGRADE") as $var
+            | . + [{token:($var + "=1"), key:($var + "=1"), var:$var, kind:"env", deck:true, foryou:true, recommended:true,
+                    what:($what[$var] // $what["PROTON_FSR4_UPGRADE"]),
+                    why:"This game ships FSR 3.1 and your Radeon runs FSR 4"}
+                   + (if $o.why != null then {needs:"First pick Proton-CachyOS (or GE-Proton) in PROTON: Steam'"'"'s default can'"'"'t"} else {} end)]' <<<"$tips")"
+    fi
     # UE4SS (Unreal mod loader) comes as dwmapi.dll in the game folder: Wine needs telling to use it
     if [[ "$(jq -r '.loader.name // ""' <<<"${m:-{\}}" 2>/dev/null)" == UE4SS ]]; then
         tips="$(jq -c --argjson what "$SUG_WHAT" '. + [{token:"WINEDLLOVERRIDES=dwmapi=n,b", key:"WINEDLLOVERRIDES=dwmapi=n,b", var:"WINEDLLOVERRIDES",
@@ -5357,7 +5370,7 @@ cmd_upscale() {
             # amd_fidelityfx_upscaler_dx12.dll + amd_fidelityfx_loader_dx12.dll — KCD2 ships these)
             f() { [[ -d "$dir" ]] || { echo false; return; }
                   local n a=(); for n in "$@"; do a+=(-o -iname "$n"); done
-                  find "$dir" -maxdepth 6 -type f \( "${a[@]:1}" \) 2>/dev/null | head -1 | grep -q . && echo true || echo false; }
+                  find "$dir" -maxdepth 12 -type f \( "${a[@]:1}" \) 2>/dev/null | head -1 | grep -q . && echo true || echo false; }
             jq -nc --argjson fsrdx "$(f amd_fidelityfx_dx12.dll amd_fidelityfx_upscaler_dx12.dll amd_fidelityfx_loader_dx12.dll)" \
                    --argjson fsrvk "$(f amd_fidelityfx_vk.dll amd_fidelityfx_upscaler_vk.dll amd_fidelityfx_loader_vk.dll)" \
                    --argjson dlss "$(f 'nvngx_dlss*.dll')" --argjson xess "$(f 'libxess*.dll')" --argjson fsr2 "$(f 'ffx_fsr2_api*.dll')" \
