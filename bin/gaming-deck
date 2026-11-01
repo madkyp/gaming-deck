@@ -876,6 +876,30 @@ steam_games() {
     done < <(steam_libs)
 }
 
+# games Steam has an update for, from their manifests → {appid: {state, done, total}}
+#   StateFlags bits: 2 update required · 256 update running · 512 paused · 1024 update started;
+#   TargetBuildID (when set) differs from buildid while the new build isn't in.
+# Steam only learns about updates while it runs: with it closed this is what it last knew.
+steam_updates_json() {
+    local lib m out=()
+    while IFS= read -r lib; do
+        for m in "$lib"/steamapps/appmanifest_*.acf; do
+            [[ -f "$m" ]] || continue
+            out+=("$(awk -F'"' '
+                $2 == "appid" { id = $4 } $2 == "StateFlags" { fl = $4 + 0 } $2 == "buildid" { b = $4 }
+                $2 == "TargetBuildID" { tb = $4 } $2 == "BytesToDownload" { tot = $4 + 0 } $2 == "BytesDownloaded" { dn = $4 + 0 }
+                END {
+                    st = ""
+                    if (int(fl / 512) % 2) st = "paused"
+                    else if (int(fl / 256) % 2 || int(fl / 1024) % 2) st = "downloading"
+                    else if (int(fl / 2) % 2 || (tb != "" && tb != "0" && tb != b)) st = "pending"
+                    if (st != "" && id != "") printf "{\"%s\":{\"state\":\"%s\",\"done\":%d,\"total\":%d}}\n", id, st, dn, tot
+                }' "$m")")
+        done
+    done < <(steam_libs)
+    printf '%s\n' "${out[@]}" | jq -sc 'map(select(. != null)) | add // {}' 2>/dev/null || echo '{}'
+}
+
 gaming_deck_bin() {
     if [[ -x "$HOME/.local/bin/gaming-deck" ]]; then echo "$HOME/.local/bin/gaming-deck"; else readlink -f "$0"; fi
 }
@@ -1397,6 +1421,7 @@ cmd_mplay() {
     local key="$1" out
     [[ "$key" == steam:* || "$key" == umbral:* ]] || { err "use: mplay steam:<id>|umbral:<id>"; return 2; }
     have "$CRISOL" || { err "Crisol is not installed"; return 4; }
+    steam_update_blocks "$key" && return 6
     out="$(crisol_cli --play "$key" 2>&1)" || { err "${out:-Crisol could not start the game}"; return 3; }
     log "▶ Playing with mods: $(game_label "$key")"; history_add "play with mods" crisol "$key" 0
 }
@@ -1415,8 +1440,17 @@ cmd_gstop() {
 }
 
 # gplay <key> — start a game from its own launcher
+# a Steam game with an update waiting isn't started from here: Steam updates it first (6)
+steam_update_blocks() {   # key
+    [[ "$1" == steam:* ]] || return 1
+    local u; u="$(steam_updates_json | jq -c --arg i "${1#steam:}" '.[$i] // empty')"
+    [[ -n "$u" ]] || return 1
+    err "$(game_label "$1") has an update in Steam ($(jq -r .state <<<"$u")): update it there first"
+    return 0
+}
 cmd_gplay() {
     local key="$1"
+    steam_update_blocks "$key" && return 6
     case "$key" in
         steam:*)
             [[ "${key#steam:}" =~ ^[0-9]+$ ]] || { err "bad Steam key"; return 2; }
@@ -1463,8 +1497,10 @@ cmd_games() {
          profile:($profs | has("steam:" + $l[$i])),
          cover:$l[$i+8], hero:$l[$i+9], logo:$l[$i+10],
          new:(($known != null) and (($known | index("steam:" + $l[$i])) == null))}]' \
-    | jq -c --argjson u "$(umbral_games)" --argjson known "$(known_games_json)" --argjson own "$(covers_json)" '
-        . + ($u | map(. as $g | $g + {profile:false, new:(($known != null) and (($known | index($g.key)) == null))}))
+    | jq -c --argjson u "$(umbral_games)" --argjson known "$(known_games_json)" --argjson own "$(covers_json)" \
+            --argjson upd "$(steam_updates_json)" '
+        map(if .source == "steam" and $upd[.id] then . + {update:$upd[.id]} else . end)
+        + ($u | map(. as $g | $g + {profile:false, new:(($known != null) and (($known | index($g.key)) == null))}))
         # a cover the user picked wins over Steam'"'"'s and Umbral'"'"'s
         | map(if $own[.key] then . + {cover:$own[.key], ownCover:true} else . end)
         | sort_by(.name | ascii_downcase)' \

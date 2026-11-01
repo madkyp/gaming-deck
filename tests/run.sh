@@ -210,6 +210,16 @@ eq "tools (Proton) are not listed as games" "$(jq length <<<"$G")" 2
 eq "escaped quotes in names are decoded" "$(jq -r '.[] | select(.id == "100") | .name' <<<"$G")" 'Game "Quoted" One'
 eq "launch options read" "$(jq -r '.[] | select(.id == "100") | .launch' <<<"$G")" "PROTON_ENABLE_WAYLAND=0 mangohud gamemoderun %command% -novid +fps_max 120"
 eq "prefix detected" "$(jq -r '.[] | select(.id == "100") | .prefix' <<<"$G")" true
+# a Steam update waiting (from the game's manifest): shown, and the game isn't started from here
+M2="$ST/steamapps/appmanifest_200.acf"; cp "$M2" "$M2.keep"
+printf '"AppState"\n{\n\t"appid"\t\t"200"\n\t"name"\t\t"Second Game"\n\t"installdir"\t\t"SecondGame"\n\t"SizeOnDisk"\t\t"2000"\n\t"StateFlags"\t\t"6"\n\t"buildid"\t\t"100"\n\t"TargetBuildID"\t\t"105"\n\t"BytesToDownload"\t\t"400"\n\t"BytesDownloaded"\t\t"100"\n}\n' > "$M2"
+eq "an update waiting in Steam shows on the game" "$("$CD" games | jq -c '.[] | select(.id == "200") | .update')" '{"state":"pending","done":100,"total":400}'
+"$CD" gplay steam:200 >/dev/null 2>&1; eq "…PLAY refuses it (6) until Steam has it in" "$?" 6
+sed -i 's/"StateFlags"\t\t"6"/"StateFlags"\t\t"1030"/' "$M2"
+eq "…downloading (StateFlags 1024)" "$("$CD" games | jq -r '.[] | select(.id == "200") | .update.state')" downloading
+sed -i 's/"StateFlags"\t\t"1030"/"StateFlags"\t\t"4"/; s/"TargetBuildID"\t\t"105"/"TargetBuildID"\t\t"100"/' "$M2"
+eq "…none once it's in" "$("$CD" games | jq -c '.[] | select(.id == "200") | .update')" null
+mv "$M2.keep" "$M2"
 TOOLS="$("$CD" compattools)"
 eq "Proton tools: Experimental + GE (comment after the name ignored)" "$(jq -r 'map(.name) | join(",")' <<<"$TOOLS")" "proton_experimental,GE-Proton9-1"
 

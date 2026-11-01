@@ -458,7 +458,21 @@ ShellRoot {
         // what needs Steam closed (launch options, Proton) goes through steamapply; with Steam open it's
         // kept here and the game page offers CLOSE STEAM AND APPLY
         property var steamPending: null     // {args, label}
+        // a Steam update waiting: the game isn't started from here until Steam has it in
+        property var selUpdate: (selGameObj || {}).update || null
+        property var gamesToUpdate: games.filter(function (g) { return !!g.update; })
+        function updateText(u) {
+            if (!u) return "";
+            var pct = u.total > 0 ? Math.floor(u.done * 100 / u.total) : 0;
+            return u.state === "downloading" ? win.t("updating in Steam") + " · " + pct + " %"
+                 : u.state === "paused" ? win.t("update paused in Steam") + " · " + pct + " %"
+                 : win.t("update waiting in Steam");
+        }
         function steamDo(args, label) { steamPending = null; runGame(["steamapply", selGameId].concat(args), label); }
+        // Steam updates games on its own: look again now and then while the deck is open (a quick read of its manifests)
+        Timer { interval: 120000; repeat: true; running: win.visible && (win.gameView === "library" || win.gameView === "game")
+                onTriggered: if (!gamesProc.running) gamesProc.running = true }
+        function openSteamPage() { Qt.openUrlExternally("steam://nav/games/details/" + selGameId); }
         function saveGameProfile() {
             runGame(["gprofile", "set", selGame,
                      "gamemode=" + (gp.gamemode === true), "mangohud=" + (gp.mangohud === true),
@@ -1383,6 +1397,20 @@ ShellRoot {
                 }
 
                 // ---- LIBRARY ----
+                // Steam has updates waiting: those games aren't started from here until they're in
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: win.gameView === "library" && win.gamesToUpdate.length > 0
+                    implicitHeight: updLibTxt.implicitHeight + 18; radius: 8
+                    color: Qt.rgba(0.98, 0.75, 0.14, 0.08); border.color: pal.amber; border.width: 1
+                    Text {
+                        id: updLibTxt; anchors.fill: parent; anchors.margins: 9; wrapMode: Text.WordWrap
+                        color: pal.amber; font.family: win.mono; font.pixelSize: 11
+                        text: "\uf021 " + win.gamesToUpdate.length + win.t(" game(s) with an update in Steam: ")
+                              + win.gamesToUpdate.map(function (g) { return g.name; }).join(", ")
+                              + win.t(". Update them there before playing.")
+                    }
+                }
                 // profiles that don't fit this PC (moved from the other one via BACKUP)
                 Rectangle {
                     Layout.fillWidth: true
@@ -1492,6 +1520,7 @@ ShellRoot {
                                     }
                                     Pill { visible: !!(win.fxScanByKey[modelData.key] || {}).current; label: "FX"; tint: pal.accent }
                                     Pill { visible: modelData.new === true; label: win.t("NEW"); tint: pal.amber }
+                                    Pill { visible: !!modelData.update; label: "\uf021 " + win.t("UPDATE"); tint: pal.amber }
                                 }
                             }
                             MouseArea {
@@ -1596,16 +1625,33 @@ ShellRoot {
                                 }
                                 Text {
                                     id: playTxt; anchors.centerIn: parent
-                                    text: "▶  " + win.t("PLAY"); color: pal.bg
+                                    text: win.selUpdate ? "\uf021  " + win.t("UPDATE IN STEAM") : "▶  " + win.t("PLAY"); color: pal.bg
                                     font.family: win.mono; font.pixelSize: 13; font.bold: true; font.letterSpacing: 3
                                 }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor; enabled: !win.gameBusy
-                                    onClicked: win.playGame()
+                                    onClicked: if (win.selUpdate) win.openSteamPage(); else win.playGame()
                                 }
                             }
                         }
 
+
+                    // a Steam update waiting: no PLAY until it's in (a game that changed can break mods, FX or a profile)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: !!win.selUpdate
+                        implicitHeight: updRow.implicitHeight + 18; radius: 8
+                        color: Qt.rgba(0.98, 0.75, 0.14, 0.08); border.color: pal.amber; border.width: 1
+                        RowLayout {
+                            id: updRow; anchors.fill: parent; anchors.margins: 9; spacing: 10
+                            Text {
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: pal.amber; font.family: win.mono; font.pixelSize: 11
+                                text: "\uf021 " + win.updateText(win.selUpdate) + ". " + win.t("PLAY waits until Steam has it in: an updated game can break its mods, shaders or profile.")
+                            }
+                            MiniBtn { width: Math.max(170, implicitWidth); height: 30; label: win.t("UPDATE IN STEAM"); tint: pal.amber; onClicked: win.openSteamPage() }
+                            MiniBtn { width: Math.max(90, implicitWidth); height: 30; label: win.t("CHECK AGAIN"); primary: false; on: !win.gameBusy; onClicked: gamesProc.running = true }
+                        }
+                    }
 
                     // header: game + ProtonDB verdict
                     RowLayout {
@@ -1843,7 +1889,7 @@ ShellRoot {
                                 Item { Layout.fillWidth: true }
                                 MiniBtn {
                                     label: win.t("PLAY WITH MODS"); visible: (win.mods.enabled !== undefined && win.mods.enabled !== null ? win.mods.enabled : win.mods.mods || 0) > 0
-                                    on: !win.gameBusy; onClicked: win.runGame(["mplay", win.selGame], "LAUNCHING…")
+                                    on: !win.gameBusy && !win.selUpdate; onClicked: win.runGame(["mplay", win.selGame], "LAUNCHING…")
                                 }
                                 // the way to update mods (without Premium it goes through Nexus' page): stands out when there's something to do
                                 MiniBtn {
@@ -2099,7 +2145,7 @@ ShellRoot {
                         }
                         MiniBtn {
                             width: Math.max(76, implicitWidth); height: 32; label: win.t("▶ PLAY"); tint: pal.ok
-                            on: !win.gameBusy
+                            on: !win.gameBusy && !win.selUpdate
                             onClicked: win.playGame()
                         }
                     }
